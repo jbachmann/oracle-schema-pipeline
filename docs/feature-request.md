@@ -3,6 +3,9 @@
 Copy this document for each request. One externally observable capability per
 request. Replace every placeholder marked `<required>`.
 
+Save plans under `docs/features/` as `<number>-<kebab-case-feature>.md`, using the
+next unused sequential number and padding it to at least two digits.
+
 ## Summary
 
 <required: one sentence describing the capability>

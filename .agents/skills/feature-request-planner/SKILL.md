@@ -24,9 +24,10 @@ document. Planning does not authorize implementation.
    derived from the research. Do not write the final plan until the requester has
    answered or explicitly accepted documented assumptions.
 5. Incorporate the feedback. Resolve contradictions or ask a focused follow-up.
-6. Create `docs/features/YYYY-MM-DD-<kebab-case-feature>.md`, adapting
-   `assets/feature-plan-template.md`. Never overwrite an existing plan; add a
-   numeric suffix when needed.
+6. Find the highest numeric prefix in `docs/features/`, increment it, and create
+   `docs/features/<number>-<kebab-case-feature>.md`, adapting
+   `assets/feature-plan-template.md`. Zero-pad to at least two digits so lexical
+   and numeric order match. Never reuse a number or overwrite an existing plan.
 7. Verify all referenced repository paths and commands. Report the plan path,
    major decisions, remaining risks, and that implementation has not started.
 
