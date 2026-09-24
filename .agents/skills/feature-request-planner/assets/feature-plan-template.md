@@ -40,4 +40,3 @@ Use observable, testable checklist items.
 ## Risks and Open Questions
 
 Record residual risks and unresolved decisions. Write `None` when fully resolved.
-

@@ -11,13 +11,13 @@ production extraction.
 
 ## Pipeline
 
-| Command | Input | Output | Oracle connection? |
-|---|---|---|---|
-| `extract` | Explicit table list | `source.json` | Source PDB, read-only catalog queries |
-| `transform` | Source model and target policy | `target.json` and diagnostic/change report | No |
-| `validate` | Target model | Diagnostics; exit 2 for semantic errors | No |
-| `generate` | Validated target model | Ordered SQL script | No |
-| `dictionary` | Source model | Formatted XLSX data dictionary | No |
+| Command      | Input                          | Output                                     | Oracle connection?                    |
+| ------------ | ------------------------------ | ------------------------------------------ | ------------------------------------- |
+| `extract`    | Explicit table list            | `source.json`                              | Source PDB, read-only catalog queries |
+| `transform`  | Source model and target policy | `target.json` and diagnostic/change report | No                                    |
+| `validate`   | Target model                   | Diagnostics; exit 2 for semantic errors    | No                                    |
+| `generate`   | Validated target model         | Ordered SQL script                         | No                                    |
+| `dictionary` | Source model                   | Formatted XLSX data dictionary             | No                                    |
 
 The source model remains unchanged. The target model retains source provenance
 but applies the one-hop FK rule. Storage decisions belong to the target policy and
@@ -59,17 +59,17 @@ workbook uses this fixed sheet order:
 8. `Prerequisites`
 9. `Diagnostics`
 
-| Sheet | Columns |
-|---|---|
-| `Metadata` | Property, Value |
-| `Tables` | Owner, Table Name, Role, Comment, Source Tablespace, Source Compression, Unsupported Features, counts |
-| `Columns` | Table identity/role, Position, Column Name, Comment, datatype details, null/default flags, identity, Collation |
-| `Constraints` | Table/constraint identity, kind/member details, parent/check/delete/index details, state flags |
-| `Indexes` | Table/index identity, type/state flags, compression, ordered key details |
-| `Views` | Identity/role, Columns, Query, view attributes, Unsupported Features |
-| `View Dependencies` | View identity/role, dependency position/identity/type/database link |
-| `Prerequisites` | Required-by identity, referenced identity, Type, Database Link |
-| `Diagnostics` | Severity, Code, Object, Message |
+| Sheet               | Columns                                                                                                        |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Metadata`          | Property, Value                                                                                                |
+| `Tables`            | Owner, Table Name, Role, Comment, Source Tablespace, Source Compression, Unsupported Features, counts          |
+| `Columns`           | Table identity/role, Position, Column Name, Comment, datatype details, null/default flags, identity, Collation |
+| `Constraints`       | Table/constraint identity, kind/member details, parent/check/delete/index details, state flags                 |
+| `Indexes`           | Table/index identity, type/state flags, compression, ordered key details                                       |
+| `Views`             | Identity/role, Columns, Query, view attributes, Unsupported Features                                           |
+| `View Dependencies` | View identity/role, dependency position/identity/type/database link                                            |
+| `Prerequisites`     | Required-by identity, referenced identity, Type, Database Link                                                 |
+| `Diagnostics`       | Severity, Code, Object, Message                                                                                |
 
 Tables and columns retain exact nullable comments. The remaining sheets expose
 the source contract's physical summaries, ordered constraint/index members, view
@@ -247,7 +247,10 @@ acknowledge each prerequisite explicitly:
 {
   "createSchemas": false,
   "externalPrerequisites": [
-    { "reference": { "owner": "APP", "name": "NEXT_VALUE" }, "type": "SEQUENCE" }
+    {
+      "reference": { "owner": "APP", "name": "NEXT_VALUE" },
+      "type": "SEQUENCE"
+    }
   ]
 }
 ```
@@ -333,17 +336,17 @@ may already exist. No existing artifact is overwritten.
 
 ## Readable code organization
 
-| Module | Responsibility |
-|---|---|
-| `model.ts` | Shared document schemas, TypeScript types, object identifiers |
-| `catalog.ts` | Oracle catalog adapter, complete expressions and ordered metadata |
-| `extract.ts` | One-hop selection, independently testable through SourceCatalog |
-| `transform.ts` | Pure source-to-target policy and change reporting |
-| `validate.ts` | Cross-object references and supported-feature checks |
-| `types.ts`, `identity.ts` | Focused datatype and identity rendering |
-| `generate.ts` | Ordered SQL generation from a validated model |
-| `files.ts` | Non-overwriting UTF-8 artifact writes |
-| `cli.ts`, `password.ts` | Commands and source connection credentials |
+| Module                    | Responsibility                                                    |
+| ------------------------- | ----------------------------------------------------------------- |
+| `model.ts`                | Shared document schemas, TypeScript types, object identifiers     |
+| `catalog.ts`              | Oracle catalog adapter, complete expressions and ordered metadata |
+| `extract.ts`              | One-hop selection, independently testable through SourceCatalog   |
+| `transform.ts`            | Pure source-to-target policy and change reporting                 |
+| `validate.ts`             | Cross-object references and supported-feature checks              |
+| `types.ts`, `identity.ts` | Focused datatype and identity rendering                           |
+| `generate.ts`             | Ordered SQL generation from a validated model                     |
+| `files.ts`                | Non-overwriting UTF-8 artifact writes                             |
+| `cli.ts`, `password.ts`   | Commands and source connection credentials                        |
 
 To extend support, first add/capture the required model facts, then add target
 validation and a renderer. Add a fixture demonstrating the semantic behavior. Do
@@ -451,6 +454,7 @@ constraint states, expression behavior, nullability, indexes and DBA_SEGMENTS.
 No live round-trip validation or automatic semantic model comparator is included.
 
 References:
+
 - https://docs.oracle.com/en/database/oracle/oracle-database/19/refrn/ALL_TAB_COLS.html
 - https://docs.oracle.com/en/database/oracle/oracle-database/19/refrn/ALL_CONSTRAINTS.html
 - https://docs.oracle.com/en/database/oracle/oracle-database/19/refrn/ALL_IND_EXPRESSIONS.html

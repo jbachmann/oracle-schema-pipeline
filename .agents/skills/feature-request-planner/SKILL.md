@@ -40,4 +40,3 @@ criteria. Prefer the smallest change that satisfies the approved outcome.
 If the feature conflicts with ADR 0001 invariants, include a required ADR step and
 do not silently redefine the architecture. Keep unresolved decisions explicit;
 never invent user preferences.
-

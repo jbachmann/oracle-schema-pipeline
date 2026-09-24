@@ -79,10 +79,7 @@
             "rely": false
           },
           "kind": "primary-key",
-          "columns": [
-            "TENANT_ID",
-            "ID"
-          ],
+          "columns": ["TENANT_ID", "ID"],
           "backingIndex": {
             "owner": "APP",
             "name": "PK_CHILD"
@@ -215,10 +212,7 @@
             "rely": false
           },
           "kind": "primary-key",
-          "columns": [
-            "TENANT_ID",
-            "ID"
-          ],
+          "columns": ["TENANT_ID", "ID"],
           "backingIndex": {
             "owner": "SHARED",
             "name": "PK_PARENT"

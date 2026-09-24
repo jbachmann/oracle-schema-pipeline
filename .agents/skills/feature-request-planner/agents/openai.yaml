@@ -1,4 +1,4 @@
 interface:
-  display_name: "Feature Request Planner"
-  short_description: "Research and plan repository features"
-  default_prompt: "Use $feature-request-planner to research and plan this feature request."
+  display_name: 'Feature Request Planner'
+  short_description: 'Research and plan repository features'
+  default_prompt: 'Use $feature-request-planner to research and plan this feature request.'

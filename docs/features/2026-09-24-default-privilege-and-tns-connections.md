@@ -96,6 +96,7 @@ remain offline and unchanged.
 
   [node-oracledb 6.10 connection handling](https://node-oracledb.readthedocs.io/en/v6.10.0/user_guide/connection_handling.html)
   (accessed 2026-09-24).
+
 - In Thin mode, node-oracledb does not search traditional Oracle Client locations
   automatically. `configDir` must identify the directory containing
   `tnsnames.ora`; `getNetworkServiceNames(configDir)` can enumerate its aliases.
@@ -160,21 +161,26 @@ the parsed `dsn`, `tnsnames`, and `tnsAlias` values plus filesystem and alias-li
 dependencies, and returns one of:
 
 ```ts
-{ connectString: string }
-{ connectString: string; configDir: string }
+{
+  connectString: string;
+}
+{
+  connectString: string;
+  configDir: string;
+}
 ```
 
 The resolver applies these stable cases:
 
-| Inputs | Result |
-|---|---|
-| `--dsn <raw>` only | `{ connectString: raw }` |
-| `--tnsnames <absolute-file> --tns-alias <alias>` | Alias plus the file's parent as `configDir` |
-| No connection form | `Missing --dsn or --tnsnames/--tns-alias. See --help.` |
-| `--dsn` plus either TNS-file option | Mutually-exclusive-options error |
-| Only one TNS-file option | Error naming the missing paired option |
-| Relative, missing, unreadable, non-file, or differently named path | Actionable TNS-path error |
-| Alias absent from parsed file | `TNS alias <alias> not found in <path>.` |
+| Inputs                                                             | Result                                                 |
+| ------------------------------------------------------------------ | ------------------------------------------------------ |
+| `--dsn <raw>` only                                                 | `{ connectString: raw }`                               |
+| `--tnsnames <absolute-file> --tns-alias <alias>`                   | Alias plus the file's parent as `configDir`            |
+| No connection form                                                 | `Missing --dsn or --tnsnames/--tns-alias. See --help.` |
+| `--dsn` plus either TNS-file option                                | Mutually-exclusive-options error                       |
+| Only one TNS-file option                                           | Error naming the missing paired option                 |
+| Relative, missing, unreadable, non-file, or differently named path | Actionable TNS-path error                              |
+| Alias absent from parsed file                                      | `TNS alias <alias> not found in <path>.`               |
 
 `src/cli.ts` adds the connection options and `--catalog-scope`, invokes the
 resolver before password reading, and spreads its result into
@@ -377,4 +383,3 @@ Oracle integration tests:
 - A `tnsnames.ora` file can reference other local files with `IFILE` or contain
   environment-specific network settings. Passing its directory to node-oracledb
   preserves driver semantics; application code must not attempt to flatten it.
-

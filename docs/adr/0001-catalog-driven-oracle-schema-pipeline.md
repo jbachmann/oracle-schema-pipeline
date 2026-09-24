@@ -140,4 +140,3 @@ compatibility decision, and acceptance criteria are unambiguous.
   operational scope unpredictable.
 - Best-effort generation: rejected because silent approximation is unsafe for
   schema semantics.
-
