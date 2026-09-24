@@ -5,9 +5,9 @@ The source database is queried for facts, not for CREATE/ALTER statements.
 No DBMS_METADATA.GET_DDL, DDL string rewriting, source staging tables, or DBMS_OUTPUT
 is used. Only the extraction command connects to Oracle; all other commands run offline.
 
-**Status:** TypeScript checking, compilation, 21 local tests and an offline CLI
-example pass. Live Oracle 19c extraction and Oracle Free 23 replay have not been
-performed here. Read the supported-subset section before a production extraction.
+**Status:** TypeScript checking, compilation, local tests, and a live Oracle Free
+round-trip integration suite pass. Read the supported-subset section before a
+production extraction.
 
 ## Pipeline
 
@@ -271,6 +271,70 @@ npm test
 npm run build
 node dist/src/cli.js --help
 ```
+
+### Live round-trip integration test
+
+The integration suite starts the Compose services, discovers their published
+listener ports, extracts all 98 seeded source tables, transforms and validates the
+model, generates SQL, replays it into the destination, re-extracts the destination,
+and compares both logical structures. It also checks table counts, foreign keys,
+and invalid objects.
+
+```bash
+npm run test:integration
+```
+
+The test deliberately drops and recreates `IAM`, `CATALOG`, `COMMERCE`, and
+`FINANCE` in `oracle-destination`. Never point it at a destination containing data
+you need. The source is read-only.
+
+Override Compose ports when the defaults are occupied:
+
+```bash
+ORACLE_SOURCE_PORT=1621 ORACLE_SOURCE_EM_PORT=5600 \
+ORACLE_DESTINATION_PORT=1622 ORACLE_DESTINATION_EM_PORT=5601 \
+npm run test:integration
+```
+
+To test an already-running Compose pair without calling `docker compose up`, use:
+
+```bash
+ORACLE_INTEGRATION_USE_EXISTING=1 npm run test:integration
+```
+
+`ORACLE_PWD` defaults to the same development password as the Compose file.
+`ORACLE_SOURCE_DSN` and `ORACLE_DESTINATION_DSN` can override automatic listener
+discovery.
+
+### Populate the destination without testing
+
+Run the complete operational flow without structural comparison or teardown:
+
+```bash
+npm run db:clone
+```
+
+This starts both Compose services, waits for source seeding, extracts all seeded
+tables, transforms and validates the model, generates SQL, and loads it into the
+destination. Containers and volumes remain running. Pipeline files are retained
+under `artifacts/db-clone-<timestamp>/`.
+
+The command is intentionally non-destructive. If any managed destination schema
+already exists, it exits without dropping or replacing anything. Use a fresh
+destination volume for each clone. The Compose port and DSN environment overrides
+described above also apply.
+
+To clear only the pipeline-managed schemas from the destination and then run the
+clone again:
+
+```bash
+npm run db:reset-destination
+npm run db:clone
+```
+
+The reset drops `FINANCE`, `COMMERCE`, `CATALOG`, and `IAM` with `CASCADE` from
+`oracle-destination`. It never touches the source, other destination schemas, the
+container, or its named volume.
 
 For a real replay, review the SQL and run it as an appropriately privileged
 administrator connected directly to the destination PDB, with UTF-8 client input:

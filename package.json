@@ -10,7 +10,10 @@
     "schema": "node --import tsx src/cli.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:integration": "node --import tsx --test --test-concurrency=1 test/integration/*.test.ts",
+    "db:clone": "node --import tsx scripts/clone-compose-database.ts",
+    "db:reset-destination": "node --import tsx scripts/reset-compose-destination.ts"
   },
   "dependencies": {
     "oracledb": "^6.10.0",
