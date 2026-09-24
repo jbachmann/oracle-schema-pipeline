@@ -27,7 +27,7 @@ test('Oracle adapter reads full LONG expressions, ordered keys and actual index 
       return { resultSet: { async getRows() { if (fetched) return []; fetched = true; return rows; }, async close() {} } };
     },
   } as unknown as Connection;
-  const table = await new OracleCatalog(connection).table({ owner: 'APP', name: 'T' });
+  const table = await new OracleCatalog(connection, 'dba').table({ owner: 'APP', name: 'T' });
   assert.equal(table.comment, "Table's café");
   assert.equal(table.columns[0].comment, 'Value Ω');
   assert.equal(table.constraints[0].kind, 'check');
@@ -35,4 +35,20 @@ test('Oracle adapter reads full LONG expressions, ordered keys and actual index 
   assert.deepEqual(table.indexes[0].keys[0], { column: null, expression: 'ABS("VALUE")', direction: 'ASC' });
   assert.ok(statements.some(sql => sql.includes('c.search_condition')));
   assert.ok(statements.every(sql => !sql.includes('SEARCH_CONDITION_VC') && !sql.includes('GET_DDL')));
+});
+
+test('catalog scope selects one complete view family', async () => {
+  for (const scope of ['all', 'dba'] as const) {
+    const statements: string[] = [];
+    const connection = { async execute(sql: string) {
+      statements.push(sql);
+      let fetched = false;
+      return { resultSet: { async getRows() { if (fetched) return []; fetched = true; return []; }, async close() {} } };
+    } } as unknown as Connection;
+    await assert.rejects(new OracleCatalog(connection, scope).table({ owner: 'APP', name: 'MISSING' }), /Missing or inaccessible table/);
+    const other = scope === 'all' ? 'dba_' : 'all_';
+    assert.ok(statements.length > 0);
+    assert.ok(statements.every(sql => !sql.toLowerCase().includes(other)));
+    assert.ok(statements.every(sql => /^\s*select\b/i.test(sql)));
+  }
 });

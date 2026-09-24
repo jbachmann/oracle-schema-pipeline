@@ -87,7 +87,7 @@ async function main(): Promise<void> {
   await writeFile(objectFile, JSON.stringify({ version: 2, tables, views: selectedViews }, null, 2) + '\n');
 
   console.log(`Writing pipeline artifacts to ${directory}`);
-  await pipeline(['extract', '--dsn', sourceDsn, '--user', 'SYSTEM', '--objects', objectFile, '--output', sourceFile]);
+  await pipeline(['extract', '--dsn', sourceDsn, '--catalog-scope', 'dba', '--user', 'SYSTEM', '--objects', objectFile, '--output', sourceFile]);
   await pipeline(['dictionary', '--input', sourceFile, '--output', dictionaryFile]);
   await pipeline(['transform', '--input', sourceFile, '--output', targetFile, '--report', reportFile]);
   await pipeline(['validate', '--input', targetFile]);

@@ -110,14 +110,46 @@ npm run schema -- extract \
   --output source.json
 ```
 
+Extraction defaults to `--catalog-scope all`. It queries only `ALL_*` views and
+supports a normally authenticated account with `CREATE SESSION` plus ordinary
+object privileges for every selected object and one-hop dependency. Metadata
+hidden from that account fails with a `Missing or inaccessible` error; extraction
+does not silently omit it or fall back to administrative views.
+
+For database-wide visibility, use an account with the required dictionary grants
+and select the administrative family explicitly:
+
+```bash
+npm run schema -- extract --dsn source-host:1521/SOURCEPDB \
+  --catalog-scope dba --user EXPORT_ADMIN \
+  --objects objects.json --output source.json
+```
+
+`--dsn` accepts either an Easy Connect string or a complete Oracle Connect
+Descriptor. Quote descriptors so the shell passes them as one argument. Never put
+a password in a connection argument; command arguments can be visible locally.
+
+Thin-mode TNS aliases require the exact, absolute path to a readable regular file
+named `tnsnames.ora` and an alias:
+
+```bash
+npm run schema -- extract \
+  --tnsnames /etc/oracle/network/admin/tnsnames.ora --tns-alias SOURCEPDB \
+  --user EXPORT_READER --objects objects.json --output source.json
+```
+
+The file path and alias form is mutually exclusive with `--dsn`. The parent
+directory is passed to node-oracledb as `configDir`; the file is never copied,
+rewritten, logged, or included in an artifact.
+
 The password is requested through a hidden terminal prompt. For unattended runs,
 use `ORACLE_PASSWORD` from your normal secret mechanism. Passwords are not accepted
 as CLI parameters or written into artifacts.
 
-Have a DBA supply a catalog reader with CREATE SESSION and sufficient access to
-the DBA_* views used in `src/catalog.ts` (SELECT_CATALOG_ROLE is the straightforward
-option). This version requires no source CREATE TABLE privilege or setup SQL.
-The source account does not execute generated SQL and performs no source DML/DDL.
+`--catalog-scope dba` requires sufficient access to the selected `DBA_*` views,
+such as `SELECT_CATALOG_ROLE`; it does not require `SYSDBA` specifically. The
+default `all` mode needs no dictionary role. Neither mode requires source CREATE
+TABLE privilege or setup SQL. The source account performs no source DML/DDL.
 
 The full source model is written locally as UTF-8 JSON. Catalog LONG expressions
 are read directly, including DATA_DEFAULT, SEARCH_CONDITION and COLUMN_EXPRESSION.

@@ -122,7 +122,7 @@ test('generated SQL reconstructs the seeded source structure', { timeout: 15 * 6
   assert.equal(tables.length, 98, 'source fixture must contain exactly 98 application tables');
   await writeFile(tableFile, `${JSON.stringify({ version: 2, tables, views: selectedViews }, null, 2)}\n`);
 
-  await pipeline(['extract', '--dsn', sourceDsn, '--user', 'SYSTEM', '--objects', tableFile, '--output', sourceFile], directory);
+  await pipeline(['extract', '--dsn', sourceDsn, '--catalog-scope', 'dba', '--user', 'SYSTEM', '--objects', tableFile, '--output', sourceFile], directory);
   await pipeline(['transform', '--input', sourceFile, '--output', targetFile], directory);
   await pipeline(['validate', '--input', targetFile], directory);
   await pipeline(['generate', '--input', targetFile, '--output', sqlFile], directory);
@@ -135,7 +135,7 @@ test('generated SQL reconstructs the seeded source structure', { timeout: 15 * 6
     `  BEGIN EXECUTE IMMEDIATE 'DROP USER ${schema} CASCADE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -1918 THEN RAISE; END IF; END;`).join('\n')}\nEND;\n/`);
   await runSqlplus('oracle-destination', `ALTER SESSION SET CONTAINER=FREEPDB1;\n${await readFile(sqlFile, 'utf8')}`);
 
-  await pipeline(['extract', '--dsn', destinationDsn, '--user', 'SYSTEM', '--objects', tableFile, '--output', replayFile], directory);
+  await pipeline(['extract', '--dsn', destinationDsn, '--catalog-scope', 'dba', '--user', 'SYSTEM', '--objects', tableFile, '--output', replayFile], directory);
   await pipeline(['transform', '--input', replayFile, '--output', replayTargetFile], directory);
 
   const expected = targetDocumentSchema.parse(JSON.parse(await readFile(targetFile, 'utf8')));

@@ -29,6 +29,18 @@ interface IndexRow {
   VISIBILITY: string; STATUS: string; PARTITIONED: string; COMPRESSION: string;
 }
 
+export type CatalogScope = 'all' | 'dba';
+const catalogViews = {
+  constraints: ['all_constraints', 'dba_constraints'], consColumns: ['all_cons_columns', 'dba_cons_columns'],
+  tables: ['all_tables', 'dba_tables'], users: ['all_users', 'dba_users'], externalTables: ['all_external_tables', 'dba_external_tables'],
+  objectTables: ['all_object_tables', 'dba_object_tables'], mviews: ['all_mviews', 'dba_mviews'], encryptedColumns: ['all_encrypted_columns', 'dba_encrypted_columns'],
+  tabComments: ['all_tab_comments', 'dba_tab_comments'], tabIdentityCols: ['all_tab_identity_cols', 'dba_tab_identity_cols'], tabCols: ['all_tab_cols', 'dba_tab_cols'],
+  colComments: ['all_col_comments', 'dba_col_comments'], indexes: ['all_indexes', 'dba_indexes'], indExpressions: ['all_ind_expressions', 'dba_ind_expressions'],
+  indColumns: ['all_ind_columns', 'dba_ind_columns'], views: ['all_views', 'dba_views'], objects: ['all_objects', 'dba_objects'],
+  tabColumns: ['all_tab_columns', 'dba_tab_columns'], dependencies: ['all_dependencies', 'dba_dependencies'],
+} as const;
+type CatalogView = keyof typeof catalogViews;
+
 /** Dictionary reads are complete result-set reads, never limited by maxRows. */
 async function queryRows<Row>(connection: Connection, sql: string, binds: BindParameters = {}): Promise<Row[]> {
   const result = await connection.execute<Row>(sql, binds, { outFormat: oracle.OUT_FORMAT_OBJECT, resultSet: true });
@@ -46,7 +58,8 @@ async function queryRows<Row>(connection: Connection, sql: string, binds: BindPa
 export class OracleCatalog implements SourceCatalog {
   private readonly constraintCache = new Map<string, ConstraintRow[]>();
   private readonly constraintColumnCache = new Map<string, string[]>();
-  constructor(private readonly connection: Connection) {}
+  constructor(private readonly connection: Connection, private readonly scope: CatalogScope = 'all') {}
+  private catalogView(name: CatalogView): string { return catalogViews[name][this.scope === 'all' ? 0 : 1]; }
 
   async databaseVersion(): Promise<string> {
     const rows = await queryRows<{ VERSION: string }>(this.connection,
@@ -63,8 +76,8 @@ export class OracleCatalog implements SourceCatalog {
       SELECT c.owner,c.constraint_name,c.constraint_type,c.generated,c.status,c.validated,
              c.deferrable,c.deferred,c.rely,c.search_condition,c.index_owner,c.index_name,
              c.r_owner,c.r_constraint_name,c.delete_rule,p.table_name AS parent_table_name
-        FROM dba_constraints c
-        LEFT JOIN dba_constraints p ON p.owner=c.r_owner AND p.constraint_name=c.r_constraint_name
+        FROM ${this.catalogView('constraints')} c
+        LEFT JOIN ${this.catalogView('constraints')} p ON p.owner=c.r_owner AND p.constraint_name=c.r_constraint_name
        WHERE c.owner=:owner AND c.table_name=:tableName ORDER BY c.constraint_name`,
       { owner: table.owner, tableName: table.name });
     this.constraintCache.set(cacheKey, rows);
@@ -76,7 +89,7 @@ export class OracleCatalog implements SourceCatalog {
     const cached = this.constraintColumnCache.get(cacheKey);
     if (cached) return cached;
     const rows = await queryRows<{ COLUMN_NAME: string }>(this.connection, `
-      SELECT column_name FROM dba_cons_columns
+      SELECT column_name FROM ${this.catalogView('consColumns')}
        WHERE owner=:owner AND constraint_name=:constraintName ORDER BY position`,
       { owner: reference.owner, constraintName: reference.name });
     const columns = rows.map(row => row.COLUMN_NAME);
@@ -117,16 +130,17 @@ export class OracleCatalog implements SourceCatalog {
     const rows = await queryRows<TableRow>(this.connection, `
       SELECT t.tablespace_name,t.compression,t.iot_type,t.cluster_name,t.nested,t.secondary,
              t.temporary,t.partitioned,u.oracle_maintained,
-             (SELECT COUNT(*) FROM dba_external_tables e WHERE e.owner=t.owner AND e.table_name=t.table_name)
-           + (SELECT COUNT(*) FROM dba_object_tables o WHERE o.owner=t.owner AND o.table_name=t.table_name)
-           + (SELECT COUNT(*) FROM dba_mviews m WHERE m.owner=t.owner AND m.mview_name=t.table_name)
-           + (SELECT COUNT(*) FROM dba_encrypted_columns e WHERE e.owner=t.owner AND e.table_name=t.table_name) AS special_count
-        FROM dba_tables t JOIN dba_users u ON u.username=t.owner
+             (SELECT COUNT(*) FROM ${this.catalogView('externalTables')} e WHERE e.owner=t.owner AND e.table_name=t.table_name)
+           + (SELECT COUNT(*) FROM ${this.catalogView('objectTables')} o WHERE o.owner=t.owner AND o.table_name=t.table_name)
+           + (SELECT COUNT(*) FROM ${this.catalogView('mviews')} m WHERE m.owner=t.owner AND m.mview_name=t.table_name)
+           + (SELECT COUNT(*) FROM ${this.catalogView('encryptedColumns')} e WHERE e.owner=t.owner AND e.table_name=t.table_name) AS special_count
+        FROM ${this.catalogView('tables')} t JOIN ${this.catalogView('users')} u ON u.username=t.owner
        WHERE t.owner=:owner AND t.table_name=:tableName`, binds);
     const table = rows[0];
     if (!table) throw new Error(`Missing or inaccessible table: ${qualifiedName(reference)}.`);
+    if (rows.length !== 1) throw new Error(`Ambiguous table metadata for ${qualifiedName(reference)}.`);
     const tableComments = await queryRows<CommentRow>(this.connection, `
-      SELECT comments FROM dba_tab_comments
+      SELECT comments FROM ${this.catalogView('tabComments')}
        WHERE owner=:owner AND table_name=:tableName AND table_type='TABLE'`, binds);
     if (tableComments.length !== 1) throw new Error(`Expected exactly one table comment row for ${qualifiedName(reference)}; found ${tableComments.length}.`);
     const unsupportedFeatures: string[] = [];
@@ -139,19 +153,19 @@ export class OracleCatalog implements SourceCatalog {
     if (table.SPECIAL_COUNT) unsupportedFeatures.push('External/object/materialized-view table or encrypted column');
 
     const identities = await queryRows<{ COLUMN_NAME: string; GENERATION_TYPE: string; IDENTITY_OPTIONS: string }>(this.connection,
-      'SELECT column_name,generation_type,identity_options FROM dba_tab_identity_cols WHERE owner=:owner AND table_name=:tableName', binds);
+      `SELECT column_name,generation_type,identity_options FROM ${this.catalogView('tabIdentityCols')} WHERE owner=:owner AND table_name=:tableName`, binds);
     const identityByColumn = new Map(identities.map(row => [row.COLUMN_NAME, row]));
     // USER_GENERATED retains invisible user columns but excludes internal columns
     // backing function-based indexes. Those indexes are modeled as expressions.
     const columnRows = await queryRows<ColumnRow>(this.connection, `
       SELECT column_name,column_id,internal_column_id,data_type,data_type_owner,data_length,char_length,
              char_used,data_precision,data_scale,nullable,data_default,default_on_null,virtual_column,hidden_column,collation
-        FROM dba_tab_cols WHERE owner=:owner AND table_name=:tableName AND user_generated='YES'
+        FROM ${this.catalogView('tabCols')} WHERE owner=:owner AND table_name=:tableName AND user_generated='YES'
        ORDER BY column_id NULLS LAST, internal_column_id`, binds);
     const columnCommentRows = await queryRows<ColumnCommentRow>(this.connection, `
       SELECT cc.column_name,cc.comments
-        FROM dba_col_comments cc
-        JOIN dba_tab_cols tc ON tc.owner=cc.owner AND tc.table_name=cc.table_name AND tc.column_name=cc.column_name
+        FROM ${this.catalogView('colComments')} cc
+        JOIN ${this.catalogView('tabCols')} tc ON tc.owner=cc.owner AND tc.table_name=cc.table_name AND tc.column_name=cc.column_name
        WHERE cc.owner=:owner AND cc.table_name=:tableName AND tc.user_generated='YES'`, binds);
     const commentByColumn = new Map<string, string | null>();
     for (const row of columnCommentRows) {
@@ -159,6 +173,9 @@ export class OracleCatalog implements SourceCatalog {
       commentByColumn.set(row.COLUMN_NAME, row.COMMENTS);
     }
     const modeledNames = new Set(columnRows.map(row => row.COLUMN_NAME));
+    for (const name of identityByColumn.keys()) if (!modeledNames.has(name)) {
+      throw new Error(`Missing or inaccessible identity column metadata for ${qualifiedName(reference)}.${name}.`);
+    }
     for (const name of commentByColumn.keys()) if (!modeledNames.has(name)) {
       throw new Error(`Unexpected column comment row for ${qualifiedName(reference)}.${name}.`);
     }
@@ -183,8 +200,10 @@ export class OracleCatalog implements SourceCatalog {
       const properties = this.constraintProperties(row);
       if (row.CONSTRAINT_TYPE === 'R') constraints.push(await this.foreignKey(row));
       else if (row.CONSTRAINT_TYPE === 'P' || row.CONSTRAINT_TYPE === 'U') {
+        const constraintColumns = await this.constraintColumns({ owner: row.OWNER, name: row.CONSTRAINT_NAME });
+        if (!constraintColumns.length) throw new Error(`Missing or inaccessible constraint columns: ${row.CONSTRAINT_NAME}.`);
         constraints.push({ ...properties, kind: row.CONSTRAINT_TYPE === 'P' ? 'primary-key' : 'unique',
-          columns: await this.constraintColumns({ owner: row.OWNER, name: row.CONSTRAINT_NAME }),
+          columns: constraintColumns,
           backingIndex: row.INDEX_OWNER && row.INDEX_NAME ? { owner: row.INDEX_OWNER, name: row.INDEX_NAME } : null });
       } else if (row.CONSTRAINT_TYPE === 'C') {
         if (!row.SEARCH_CONDITION) throw new Error(`Missing full check expression: ${row.CONSTRAINT_NAME}.`);
@@ -205,18 +224,24 @@ export class OracleCatalog implements SourceCatalog {
   private async indexes(table: ObjectReference): Promise<IndexDefinition[]> {
     const indexRows = await queryRows<IndexRow>(this.connection, `
       SELECT owner,index_name,index_type,uniqueness,visibility,status,partitioned,compression
-        FROM dba_indexes WHERE table_owner=:owner AND table_name=:tableName AND index_type<>'LOB'
+        FROM ${this.catalogView('indexes')} WHERE table_owner=:owner AND table_name=:tableName AND index_type<>'LOB'
        ORDER BY owner,index_name`, { owner: table.owner, tableName: table.name });
     const definitions: IndexDefinition[] = [];
     for (const index of indexRows) {
       const binds = { owner: index.OWNER, indexName: index.INDEX_NAME };
       const expressions = await queryRows<{ COLUMN_POSITION: number; COLUMN_EXPRESSION: string }>(this.connection, `
-        SELECT column_position,column_expression FROM dba_ind_expressions
+        SELECT column_position,column_expression FROM ${this.catalogView('indExpressions')}
          WHERE index_owner=:owner AND index_name=:indexName ORDER BY column_position`, binds);
       const expressionByPosition = new Map(expressions.map(row => [row.COLUMN_POSITION, row.COLUMN_EXPRESSION]));
       const keys = await queryRows<{ COLUMN_NAME: string; COLUMN_POSITION: number; DESCEND: 'ASC' | 'DESC' }>(this.connection, `
-        SELECT column_name,column_position,descend FROM dba_ind_columns
+        SELECT column_name,column_position,descend FROM ${this.catalogView('indColumns')}
          WHERE index_owner=:owner AND index_name=:indexName ORDER BY column_position`, binds);
+      if (!keys.length || keys.some((key, position) => key.COLUMN_POSITION !== position + 1)) {
+        throw new Error(`Missing or inaccessible index keys: ${index.OWNER}.${index.INDEX_NAME}.`);
+      }
+      for (const position of expressionByPosition.keys()) if (!keys.some(key => key.COLUMN_POSITION === position)) {
+        throw new Error(`Missing or inaccessible index expression key: ${index.OWNER}.${index.INDEX_NAME}.`);
+      }
       definitions.push({ reference: { owner: index.OWNER, name: index.INDEX_NAME }, type: index.INDEX_TYPE,
         unique: index.UNIQUENESS === 'UNIQUE', visible: index.VISIBILITY === 'VISIBLE', status: index.STATUS,
         partitioned: index.PARTITIONED === 'YES', compression: index.COMPRESSION,
@@ -229,10 +254,11 @@ export class OracleCatalog implements SourceCatalog {
 
   async view(reference: ObjectReference): Promise<ViewDefinition> {
     const binds = { owner: reference.owner, viewName: reference.name };
-    const rows = await queryRows<any>(this.connection, `SELECT v.text,v.read_only,v.bequeath,v.editioning_view,v.container_data,v.default_collation,v.type_text,v.superview_name,o.status,u.oracle_maintained FROM dba_views v JOIN dba_objects o ON o.owner=v.owner AND o.object_name=v.view_name AND o.object_type='VIEW' JOIN dba_users u ON u.username=v.owner WHERE v.owner=:owner AND v.view_name=:viewName`, binds);
+    const rows = await queryRows<any>(this.connection, `SELECT v.text,v.read_only,v.bequeath,v.editioning_view,v.container_data,v.default_collation,v.type_text,v.superview_name,o.status,u.oracle_maintained FROM ${this.catalogView('views')} v JOIN ${this.catalogView('objects')} o ON o.owner=v.owner AND o.object_name=v.view_name AND o.object_type='VIEW' JOIN ${this.catalogView('users')} u ON u.username=v.owner WHERE v.owner=:owner AND v.view_name=:viewName`, binds);
     const row = rows[0];
     if (!row) throw new Error("Missing or inaccessible view: " + qualifiedName(reference));
-    const columns = await queryRows<{ COLUMN_NAME: string }>(this.connection, "SELECT column_name FROM dba_tab_columns WHERE owner=:owner AND table_name=:viewName ORDER BY column_id", binds);
+    if (rows.length !== 1) throw new Error(`Ambiguous view metadata for ${qualifiedName(reference)}.`);
+    const columns = await queryRows<{ COLUMN_NAME: string }>(this.connection, `SELECT column_name FROM ${this.catalogView('tabColumns')} WHERE owner=:owner AND table_name=:viewName ORDER BY column_id`, binds);
     const unsupportedFeatures: string[] = [];
     if (row.ORACLE_MAINTAINED !== "N") unsupportedFeatures.push("Oracle-maintained schema");
     if (row.EDITIONING_VIEW === "Y") unsupportedFeatures.push("Editioning view");
@@ -242,7 +268,7 @@ export class OracleCatalog implements SourceCatalog {
   }
 
   async viewDependencies(reference: ObjectReference): Promise<ViewDefinition["dependencies"]> {
-    const rows = await queryRows<any>(this.connection, `SELECT DISTINCT referenced_owner,referenced_name,referenced_type,referenced_link_name FROM dba_dependencies WHERE owner=:owner AND name=:viewName AND type='VIEW' ORDER BY referenced_owner,referenced_name,referenced_type`, { owner: reference.owner, viewName: reference.name });
+    const rows = await queryRows<any>(this.connection, `SELECT DISTINCT referenced_owner,referenced_name,referenced_type,referenced_link_name FROM ${this.catalogView('dependencies')} WHERE owner=:owner AND name=:viewName AND type='VIEW' ORDER BY referenced_owner,referenced_name,referenced_type`, { owner: reference.owner, viewName: reference.name });
     return rows.map(row => ({ reference: { owner: row.REFERENCED_OWNER ?? "PUBLIC", name: row.REFERENCED_NAME }, type: row.REFERENCED_TYPE, databaseLink: row.REFERENCED_LINK_NAME }));
   }
 
@@ -250,14 +276,14 @@ export class OracleCatalog implements SourceCatalog {
     const rows = await queryRows<{ REFERENCED_OWNER: string | null; REFERENCED_NAME: string;
       REFERENCED_TYPE: string; REFERENCED_LINK_NAME: string | null }>(this.connection, `
       SELECT DISTINCT d.referenced_owner,d.referenced_name,d.referenced_type,d.referenced_link_name
-        FROM dba_dependencies d
+        FROM ${this.catalogView('dependencies')} d
        WHERE ((d.owner=:owner AND d.name=:tableName AND d.type='TABLE') OR
-         (d.type='INDEX' AND EXISTS (SELECT 1 FROM dba_indexes i WHERE i.owner=d.owner AND i.index_name=d.name
+         (d.type='INDEX' AND EXISTS (SELECT 1 FROM ${this.catalogView('indexes')} i WHERE i.owner=d.owner AND i.index_name=d.name
            AND i.table_owner=:owner AND i.table_name=:tableName)))
          AND (d.referenced_link_name IS NOT NULL OR
-           (d.referenced_type<>'TABLE' AND NOT EXISTS (SELECT 1 FROM dba_users u
+           (d.referenced_type<>'TABLE' AND NOT EXISTS (SELECT 1 FROM ${this.catalogView('users')} u
              WHERE u.username=d.referenced_owner AND u.oracle_maintained='Y')))
-         AND NOT EXISTS (SELECT 1 FROM dba_tab_identity_cols identity_column
+         AND NOT EXISTS (SELECT 1 FROM ${this.catalogView('tabIdentityCols')} identity_column
            WHERE identity_column.owner=d.referenced_owner AND identity_column.sequence_name=d.referenced_name
              AND d.referenced_type='SEQUENCE')
        ORDER BY d.referenced_owner,d.referenced_name`, { owner: table.owner, tableName: table.name });
