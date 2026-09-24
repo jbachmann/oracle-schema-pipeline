@@ -4,7 +4,7 @@ import { sourceDocumentSchema, targetDocumentSchema, selectionSchema, policySche
 import { transformSource, transformationReport } from './transform.js';
 import { validateTarget } from './validate.js';
 import { generateSql } from './generate.js';
-import { writeJson, writeNewFile } from './files.js';
+import { writeJson, writeNewBuffer, writeNewFile } from './files.js';
 
 async function readJson(path: string): Promise<unknown> { return JSON.parse(await readFile(path, 'utf8')); }
 function requireOption(value: string | undefined, name: string): string {
@@ -23,6 +23,7 @@ async function main(): Promise<void> {
   npm run schema -- transform --input source.json --policy policy.json --output target.json
   npm run schema -- validate --input target.json [--report validation.json]
   npm run schema -- generate --input target.json --output clone.sql
+  npm run schema -- dictionary --input source.json --output dictionary.xlsx
 
 Only extract connects to Oracle. Password: hidden prompt or ORACLE_PASSWORD.
 Transform also writes <output>.report.json unless --report is supplied.
@@ -31,7 +32,7 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
   }
   if (positionals.length !== 1) throw new Error('Supply exactly one command.');
   const command = positionals[0];
-  if (!['extract', 'transform', 'validate', 'generate'].includes(command)) throw new Error(`Unknown command: ${command}`);
+  if (!['extract', 'transform', 'validate', 'generate', 'dictionary'].includes(command)) throw new Error(`Unknown command: ${command}`);
   if (command !== 'validate') {
     const output = requireOption(values.output, 'output');
     try { await access(output); throw new Error(`Output exists: ${output}`); }
@@ -53,6 +54,11 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
       await writeJson(values.output!, source);
       console.log(`Extracted ${source.tables.length} table definitions to ${values.output}.`);
     } finally { await connection.close(); }
+  } else if (command === 'dictionary') {
+    const source = sourceDocumentSchema.parse(await readJson(requireOption(values.input, 'input')));
+    const { createDictionaryBuffer } = await import('./dictionary.js');
+    await writeNewBuffer(values.output!, await createDictionaryBuffer(source));
+    console.log(`Wrote ${values.output}.`);
   } else if (command === 'transform') {
     const source = sourceDocumentSchema.parse(await readJson(requireOption(values.input, 'input')));
     const policy = policySchema.parse(values.policy ? await readJson(values.policy) : {});

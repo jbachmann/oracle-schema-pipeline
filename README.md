@@ -17,6 +17,7 @@ production extraction.
 | `transform` | Source model and target policy | `target.json` and diagnostic/change report | No |
 | `validate` | Target model | Diagnostics; exit 2 for semantic errors | No |
 | `generate` | Validated target model | Ordered SQL script | No |
+| `dictionary` | Source model | Formatted XLSX data dictionary | No |
 
 The source model remains unchanged. The target model retains source provenance
 but applies the one-hop FK rule. Storage decisions belong to the target policy and
@@ -34,12 +35,55 @@ npm ci
 npm run schema -- transform --input examples/source.json --policy examples/policy.json --output my-target.json
 npm run schema -- validate --input my-target.json
 npm run schema -- generate --input my-target.json --output my-clone.sql
+npm run schema -- dictionary --input examples/source.json --output my-dictionary.xlsx
 ```
 
 The package includes synthetic `examples/source.json`, its target model,
 `target.json.report.json`, and the resulting `clone.sql` for inspection. They are
 not files captured from a real source database. Choose new output names: existing
 files are never overwritten.
+
+## Source data dictionary workbook
+
+`dictionary` is an offline presentation branch from `source.json`; it does not
+change the four-stage reconstruction pipeline or connect to Oracle. The generated
+workbook uses this fixed sheet order:
+
+1. `Metadata`
+2. `Tables`
+3. `Columns`
+4. `Constraints`
+5. `Indexes`
+6. `Views`
+7. `View Dependencies`
+8. `Prerequisites`
+9. `Diagnostics`
+
+| Sheet | Columns |
+|---|---|
+| `Metadata` | Property, Value |
+| `Tables` | Owner, Table Name, Role, Comment, Source Tablespace, Source Compression, Unsupported Features, counts |
+| `Columns` | Table identity/role, Position, Column Name, Comment, datatype details, null/default flags, identity, Collation |
+| `Constraints` | Table/constraint identity, kind/member details, parent/check/delete/index details, state flags |
+| `Indexes` | Table/index identity, type/state flags, compression, ordered key details |
+| `Views` | Identity/role, Columns, Query, view attributes, Unsupported Features |
+| `View Dependencies` | View identity/role, dependency position/identity/type/database link |
+| `Prerequisites` | Required-by identity, referenced identity, Type, Database Link |
+| `Diagnostics` | Severity, Code, Object, Message |
+
+Tables and columns retain exact nullable comments. The remaining sheets expose
+the source contract's physical summaries, ordered constraint/index members, view
+facts and dependency edges, prerequisites, and extraction diagnostics. Headers
+are frozen and filterable; long text is wrapped. Rows use deterministic ordinal
+ordering and booleans use `TRUE`/`FALSE`.
+
+Every source string is written as literal text, including values beginning with
+`=`, `+`, `-`, `@`, tabs, or apostrophes. The workbook contains no formulas,
+macros, external links, or data connections. Values exceeding Excel's 32,767
+character or 253 line-feed cell limits, or its 1,048,576-row sheet limit, fail
+instead of being truncated. Output uses the same exclusive `.partial` commit
+behavior as other artifacts. The generated example is
+`examples/data-dictionary.xlsx`.
 
 ## Extract a real database
 
@@ -325,8 +369,9 @@ npm run db:clone
 ```
 
 This starts both Compose services, waits for source seeding, extracts all seeded
-tables, transforms and validates the model, generates SQL, and loads it into the
-destination. Containers and volumes remain running. Pipeline files are retained
+tables, writes `data-dictionary.xlsx`, transforms and validates the model, generates
+SQL, and loads it into the destination. Containers and volumes remain running.
+Pipeline files are retained
 under `artifacts/db-clone-<timestamp>/`.
 
 The command is intentionally non-destructive. If any managed destination schema

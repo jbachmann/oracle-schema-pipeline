@@ -16,6 +16,7 @@
     "db:reset-destination": "node --import tsx scripts/reset-compose-destination.ts"
   },
   "dependencies": {
+    "exceljs": "4.4.0",
     "oracledb": "^6.10.0",
     "zod": "^3.25.76"
   },

@@ -80,6 +80,7 @@ async function main(): Promise<void> {
   await mkdir(directory, { recursive: true });
   const objectFile = join(directory, 'objects.json');
   const sourceFile = join(directory, 'source.json');
+  const dictionaryFile = join(directory, 'data-dictionary.xlsx');
   const targetFile = join(directory, 'target.json');
   const reportFile = join(directory, 'report.json');
   const sqlFile = join(directory, 'clone.sql');
@@ -87,6 +88,7 @@ async function main(): Promise<void> {
 
   console.log(`Writing pipeline artifacts to ${directory}`);
   await pipeline(['extract', '--dsn', sourceDsn, '--user', 'SYSTEM', '--objects', objectFile, '--output', sourceFile]);
+  await pipeline(['dictionary', '--input', sourceFile, '--output', dictionaryFile]);
   await pipeline(['transform', '--input', sourceFile, '--output', targetFile, '--report', reportFile]);
   await pipeline(['validate', '--input', targetFile]);
   await pipeline(['generate', '--input', targetFile, '--output', sqlFile]);

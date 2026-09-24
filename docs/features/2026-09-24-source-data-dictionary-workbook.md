@@ -1,6 +1,6 @@
 # Feature: Source Data Dictionary Workbook
 
-- Status: Planned
+- Status: Implemented
 - Date: 2026-09-24
 - Request: Generate a structured, human-readable XLSX data dictionary from an
   extracted source document, emphasizing exact table and column comments and
@@ -265,27 +265,27 @@ Stable user-facing failures include:
 
 ## Acceptance Criteria
 
-- [ ] `npm run schema -- dictionary --input source.json --output dictionary.xlsx`
+- [x] `npm run schema -- dictionary --input source.json --output dictionary.xlsx`
       creates a readable XLSX workbook from a valid source document without Oracle
       access.
-- [ ] Workbook sheets appear in the documented fixed order and expose every field
+- [x] Workbook sheets appear in the documented fixed order and expose every field
       listed in the workbook contract.
-- [ ] `Tables` and `Columns` are prominent and preserve table and column comments
+- [x] `Tables` and `Columns` are prominent and preserve table and column comments
       exactly, including null, Unicode, apostrophes, whitespace, and line breaks.
-- [ ] `Views` and `View Dependencies` are separate sheets and preserve modeled
+- [x] `Views` and `View Dependencies` are separate sheets and preserve modeled
       view facts and dependency order.
-- [ ] Headers are frozen and filterable; long text is wrapped; rows use stable,
+- [x] Headers are frozen and filterable; long text is wrapped; rows use stable,
       documented ordering.
-- [ ] Formula-looking source text remains literal text and cannot create workbook
+- [x] Formula-looking source text remains literal text and cannot create workbook
       formulas, macros, external links, or data connections.
-- [ ] Unrepresentable Excel cell, line-feed, or row counts fail with stable,
+- [x] Unrepresentable Excel cell, line-feed, or row counts fail with stable,
       actionable errors; no source value is truncated, normalized, or split.
-- [ ] Existing output files are never overwritten and failed work does not create
+- [x] Existing output files are never overwritten and failed work does not create
       a valid final workbook.
-- [ ] Source/target JSON contracts remain format version 3 with no field changes.
-- [ ] Existing extract, transform, validate, and generate behavior is unchanged;
+- [x] Source/target JSON contracts remain format version 3 with no field changes.
+- [x] Existing extract, transform, validate, and generate behavior is unchanged;
       only extract can connect to Oracle.
-- [ ] README, example workbook, unit tests, typecheck, and build are updated and
+- [x] README, example workbook, unit tests, typecheck, and build are updated and
       pass.
 
 ## Risks and Open Questions
