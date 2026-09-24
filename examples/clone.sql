@@ -1,4 +1,4 @@
--- Generated from oracle-schema-pipeline format 1. No source DDL was replayed.
+-- Generated from oracle-schema-pipeline format 3. No source DDL was replayed.
 
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
 
@@ -28,24 +28,38 @@ CREATE TABLE "SHARED"."PARENT" (
   "ID" NUMBER(10,0)
 ) SEGMENT CREATION DEFERRED;
 
--- Phase 2: standalone and constraint-supporting indexes, exactly once.
+-- Phase 2: table and column comments.
+
+BEGIN
+  EXECUTE IMMEDIATE
+    'COMMENT ON TABLE "APP"."CHILD" IS ''Synthetic child table''''s comment & ' ||
+    UNISTR('\03A9') ||
+    '''';
+END;
+/
+
+COMMENT ON COLUMN "APP"."CHILD"."TENANT_ID" IS 'Tenant identifier';
+
+-- Phase 3: standalone and constraint-supporting indexes, exactly once.
 
 CREATE UNIQUE INDEX "APP"."PK_CHILD" ON "APP"."CHILD" ("TENANT_ID" ASC, "ID" ASC);
 
 CREATE UNIQUE INDEX "SHARED"."PK_PARENT" ON "SHARED"."PARENT" ("TENANT_ID" ASC, "ID" ASC);
 
--- Phase 3: local constraints and candidate keys, reusing existing indexes.
+-- Phase 4: local constraints and candidate keys, reusing existing indexes.
 
 ALTER TABLE "APP"."CHILD" ADD CONSTRAINT "PK_CHILD" PRIMARY KEY ("TENANT_ID", "ID") NOT DEFERRABLE USING INDEX "APP"."PK_CHILD" ENABLE VALIDATE;
 
 ALTER TABLE "SHARED"."PARENT" ADD CONSTRAINT "PK_PARENT" PRIMARY KEY ("TENANT_ID", "ID") NOT DEFERRABLE USING INDEX "SHARED"."PK_PARENT" ENABLE VALIDATE;
 
--- Phase 4: cross-schema REFERENCES grants.
+-- Phase 5: cross-schema REFERENCES grants.
 
 GRANT REFERENCES ON "SHARED"."PARENT" TO "APP";
 
--- Phase 5: selected target-origin foreign keys only.
+-- Phase 6: selected target-origin foreign keys only.
 
 ALTER TABLE "APP"."CHILD" ADD CONSTRAINT "FK_CHILD_PARENT" FOREIGN KEY ("TENANT_ID", "ID") REFERENCES "SHARED"."PARENT" ("TENANT_ID", "ID") NOT DEFERRABLE ENABLE VALIDATE;
+
+-- Phase 7: conventional views.
 
 PROMPT Schema reconstruction completed.

@@ -1,6 +1,7 @@
 import { renderIdentity } from './identity.js';
 import { targetDocumentSchema, objectKey, qualifiedName, type Diagnostic, type TargetDocument } from './model.js';
 import { renderDataType } from './types.js';
+import { renderComment } from './comments.js';
 
 /** Validate semantic references in addition to the JSON document's shape. */
 export function validateTarget(input: unknown): Diagnostic[] {
@@ -18,6 +19,10 @@ export function validateTarget(input: unknown): Diagnostic[] {
     const isTarget = targetKeys.has(objectKey(table.reference));
     if (table.role === 'target' !== isTarget) error('ROLE_MISMATCH', tableName, 'Table role disagrees with the original target list.');
     for (const feature of table.unsupportedFeatures) error('UNSUPPORTED_FEATURE', tableName, feature);
+    if (table.comment !== null) {
+      try { renderComment(table.reference, null, table.comment); }
+      catch (reason) { error('UNRENDERABLE_TABLE_COMMENT', tableName, String(reason)); }
+    }
     const columnNames = new Set(table.columns.map(column => column.name));
     if (columnNames.size !== table.columns.length) error('DUPLICATE_COLUMN', tableName, 'Column names must be unique.');
     if (new Set(table.columns.map(column => column.position)).size !== table.columns.length) error('DUPLICATE_POSITION', tableName, 'Column positions must be unique.');
@@ -25,6 +30,10 @@ export function validateTarget(input: unknown): Diagnostic[] {
     for (const column of table.columns) {
       if (table.constraints.filter(constraint => constraint.kind === 'not-null' && constraint.column === column.name).length > 1) error('DUPLICATE_NOT_NULL', tableName, `Multiple NOT NULL constraints on ${column.name} need manual review.`);
       const columnName = `${tableName}.${column.name}`;
+      if (column.comment !== null) {
+        try { renderComment(table.reference, column.name, column.comment); }
+        catch (reason) { error('UNRENDERABLE_COLUMN_COMMENT', columnName, String(reason)); }
+      }
       try { renderDataType(column, document.policy); } catch (reason) { error('UNSUPPORTED_TYPE', columnName, String(reason)); }
       if (column.identity) {
         try { renderIdentity(column); } catch (reason) { error('UNSUPPORTED_IDENTITY', columnName, String(reason)); }

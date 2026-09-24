@@ -36,6 +36,6 @@ export async function extractSource(catalog: SourceCatalog, selection: ObjectSel
     table.role = tableTargets.has(key) ? 'target' : parentKeys.has(key) ? 'direct-parent' : 'view-dependency';
     tables.push(table); prerequisites.push(...await catalog.prerequisites(reference));
   }
-  return sourceDocumentSchema.parse({ formatVersion: 2, kind: 'source', dialect: 'oracle', sourceVersion: await catalog.databaseVersion(),
+  return sourceDocumentSchema.parse({ formatVersion: 3, kind: 'source', dialect: 'oracle', sourceVersion: await catalog.databaseVersion(),
     extractedAt: new Date().toISOString(), targetTables, targetViews, tables, views, prerequisites, diagnostics: [] });
 }

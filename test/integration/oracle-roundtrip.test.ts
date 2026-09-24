@@ -81,6 +81,7 @@ function comparable(document: TargetDocument): unknown {
   return document.tables.map(table => ({
     reference: table.reference,
     role: table.role,
+    comment: table.comment,
     unsupportedFeatures: table.unsupportedFeatures,
     columns: table.columns.map(column => ({ ...column,
       // Oracle assigns a new ISEQ$$_ name on replay. Identity options carry
@@ -139,6 +140,11 @@ test('generated SQL reconstructs the seeded source structure', { timeout: 15 * 6
 
   const expected = targetDocumentSchema.parse(JSON.parse(await readFile(targetFile, 'utf8')));
   const actual = targetDocumentSchema.parse(JSON.parse(await readFile(replayTargetFile, 'utf8')));
+  const users = expected.tables.find(table => table.reference.owner === 'IAM' && table.reference.name === 'PRINCIPALS')!;
+  const products = expected.tables.find(table => table.reference.owner === 'CATALOG' && table.reference.name === 'PRODUCTS')!;
+  assert.equal(users.comment, "Users' directory & lifecycle — exact text");
+  assert.equal(users.columns.find(column => column.name === 'EMAIL')!.comment, "Primary address\nUnicode Ω & apostrophe's test");
+  assert.equal(products.columns.find(column => column.name === 'PRODUCT_NAME')!.comment?.length, 3900);
   assert.deepEqual(comparable(actual), comparable(expected));
   assert.deepEqual(comparableViews(actual), comparableViews(expected));
   assert.equal(expected.views.length, 5);

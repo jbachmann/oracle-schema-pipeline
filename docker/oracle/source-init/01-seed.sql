@@ -1,4 +1,5 @@
 WHENEVER SQLERROR EXIT SQL.SQLCODE
+SET DEFINE OFF
 ALTER SESSION SET CONTAINER = FREEPDB1;
 
 CREATE USER IAM NO AUTHENTICATION DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS;
@@ -280,6 +281,13 @@ BEGIN
         quoted_literal(column_description(table_record.table_name, column_record.column_name));
     END LOOP;
   END LOOP;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'COMMENT ON TABLE IAM.PRINCIPALS IS ''Users'''' directory & lifecycle ' || UNISTR(CHR(92) || '2014') || ' exact text''';
+  EXECUTE IMMEDIATE 'COMMENT ON COLUMN IAM.PRINCIPALS.EMAIL IS ''Primary address' || CHR(10) || 'Unicode ' || UNISTR(CHR(92) || '03A9') || ' & apostrophe''''s test''';
+  EXECUTE IMMEDIATE 'COMMENT ON COLUMN CATALOG.PRODUCTS.PRODUCT_NAME IS ''' || RPAD('L', 3900, 'L') || '''';
 END;
 /
 

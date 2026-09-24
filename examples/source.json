@@ -1,5 +1,5 @@
 {
-  "formatVersion": 2,
+  "formatVersion": 3,
   "dialect": "oracle",
   "sourceVersion": "19.0.0.0.0",
   "extractedAt": "2026-09-22T00:00:00.000Z",
@@ -42,7 +42,8 @@
           "virtual": false,
           "invisible": false,
           "identity": null,
-          "collation": null
+          "collation": null,
+          "comment": "Tenant identifier"
         },
         {
           "name": "ID",
@@ -62,7 +63,8 @@
           "virtual": false,
           "invisible": false,
           "identity": null,
-          "collation": null
+          "collation": null,
+          "comment": null
         }
       ],
       "constraints": [
@@ -143,7 +145,8 @@
             }
           ]
         }
-      ]
+      ],
+      "comment": "Synthetic child table's comment & Ω"
     },
     {
       "reference": {
@@ -175,7 +178,8 @@
           "virtual": false,
           "invisible": false,
           "identity": null,
-          "collation": null
+          "collation": null,
+          "comment": null
         },
         {
           "name": "ID",
@@ -195,7 +199,8 @@
           "virtual": false,
           "invisible": false,
           "identity": null,
-          "collation": null
+          "collation": null,
+          "comment": null
         }
       ],
       "constraints": [
@@ -276,7 +281,8 @@
             }
           ]
         }
-      ]
+      ],
+      "comment": null
     }
   ],
   "prerequisites": [],

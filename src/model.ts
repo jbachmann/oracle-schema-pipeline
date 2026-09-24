@@ -19,6 +19,7 @@ export type Diagnostic = z.infer<typeof diagnosticSchema>;
 export const columnSchema = z.object({
   name: identifierSchema,
   position: z.number().int().positive(),
+  comment: z.string().nullable(),
   // Preserve Oracle's own type identity and parameters; do not map to JS types.
   dataType: z.object({
     name: z.string(), owner: z.string().nullable(), byteLength: z.number().int().nonnegative(),
@@ -70,6 +71,7 @@ export type IndexDefinition = z.infer<typeof indexSchema>;
 export const tableSchema = z.object({
   reference: objectReferenceSchema,
   role: z.enum(['target', 'direct-parent', 'view-dependency']),
+  comment: z.string().nullable(),
   // Features cannot be silently discarded. Nonempty entries block generation.
   unsupportedFeatures: z.array(z.string()),
   sourcePhysical: z.object({ tablespace: z.string().nullable(), compression: z.string().nullable() }).strict(),
@@ -95,7 +97,7 @@ export const prerequisiteSchema = z.object({
 }).strict();
 export type Prerequisite = z.infer<typeof prerequisiteSchema>;
 const commonDocumentProperties = {
-  formatVersion: z.literal(2), dialect: z.literal("oracle"), sourceVersion: z.string(), extractedAt: z.string().datetime(),
+  formatVersion: z.literal(3), dialect: z.literal("oracle"), sourceVersion: z.string(), extractedAt: z.string().datetime(),
   targetTables: z.array(objectReferenceSchema), targetViews: z.array(objectReferenceSchema),
   tables: z.array(tableSchema), views: z.array(viewSchema), prerequisites: z.array(prerequisiteSchema), diagnostics: z.array(diagnosticSchema),
 };

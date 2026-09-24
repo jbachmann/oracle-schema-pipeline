@@ -2,6 +2,7 @@ import { renderIdentity } from './identity.js';
 import { quoteIdentifier, qualifiedName, objectKey, type ConstraintDefinition, type TableDefinition, type TargetDocument } from './model.js';
 import { assertValidTarget } from './validate.js';
 import { renderDataType } from './types.js';
+import { renderComment } from './comments.js';
 
 function constraintState(constraint: ConstraintDefinition): string {
   const state = constraint.state;
@@ -42,7 +43,15 @@ export function generateSql(input: unknown): string {
   statements.push('-- Phase 1: all tables, without foreign keys.');
   for (const table of tables) statements.push(createTable(table, document));
 
-  statements.push('-- Phase 2: standalone and constraint-supporting indexes, exactly once.');
+  statements.push('-- Phase 2: table and column comments.');
+  for (const table of tables) {
+    if (table.comment !== null) statements.push(renderComment(table.reference, null, table.comment));
+    for (const column of [...table.columns].sort((left, right) => left.position - right.position)) {
+      if (column.comment !== null) statements.push(renderComment(table.reference, column.name, column.comment));
+    }
+  }
+
+  statements.push('-- Phase 3: standalone and constraint-supporting indexes, exactly once.');
   for (const table of tables) {
     for (const index of table.indexes) {
       const bitmap = index.type.includes('BITMAP');
@@ -51,7 +60,7 @@ export function generateSql(input: unknown): string {
       statements.push(`CREATE ${modifier}INDEX ${qualifiedName(index.reference)} ON ${qualifiedName(table.reference)} (${keys})${index.type === 'NORMAL/REV' ? ' REVERSE' : ''}${index.visible ? '' : ' INVISIBLE'};`);
     }
   }
-  statements.push('-- Phase 3: local constraints and candidate keys, reusing existing indexes.');
+  statements.push('-- Phase 4: local constraints and candidate keys, reusing existing indexes.');
   for (const table of tables) {
     for (const constraint of table.constraints) {
       const prefix = `ALTER TABLE ${qualifiedName(table.reference)}`;
@@ -69,7 +78,7 @@ export function generateSql(input: unknown): string {
       }
     }
   }
-  statements.push('-- Phase 4: cross-schema REFERENCES grants.');
+  statements.push('-- Phase 5: cross-schema REFERENCES grants.');
   const referenceGrants = new Set<string>();
   for (const table of tables) for (const constraint of table.constraints) {
     if (constraint.kind === 'foreign-key' && constraint.parentTable.owner !== table.reference.owner) {
@@ -77,7 +86,7 @@ export function generateSql(input: unknown): string {
     }
   }
   statements.push(...[...referenceGrants].sort());
-  statements.push('-- Phase 5: selected target-origin foreign keys only.');
+  statements.push('-- Phase 6: selected target-origin foreign keys only.');
   for (const table of tables) for (const constraint of table.constraints) {
     if (constraint.kind !== 'foreign-key') continue;
     const childColumns = constraint.columnPairs.map(pair => quoteIdentifier(pair.childColumn)).join(', ');
@@ -86,7 +95,7 @@ export function generateSql(input: unknown): string {
     statements.push(`ALTER TABLE ${qualifiedName(table.reference)} ADD CONSTRAINT ${quoteIdentifier(constraint.name)} FOREIGN KEY (${childColumns}) REFERENCES ${qualifiedName(constraint.parentTable)} (${parentColumns})${deleteClause} ${constraintState(constraint)};`);
   }
   {
-    statements.push("-- Phase 6: conventional views.");
+    statements.push("-- Phase 7: conventional views.");
     const pending = new Map(document.views.map(view => [objectKey(view.reference), view])), ordered = [];
     while (pending.size) { const ready = [...pending].filter(([, view]) => view.dependencies.filter(edge => edge.type === "VIEW" && !edge.databaseLink).every(edge => !pending.has(objectKey(edge.reference)))).sort(([a], [b]) => a.localeCompare(b)); if (!ready.length) throw new Error("VIEW_DEPENDENCY_CYCLE"); for (const [key, view] of ready) { ordered.push(view); pending.delete(key); } }
     const grants = new Set<string>();

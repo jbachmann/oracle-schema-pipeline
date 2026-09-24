@@ -15,6 +15,8 @@ interface ColumnRow {
   NULLABLE: string; DATA_DEFAULT: string | null; DEFAULT_ON_NULL: string;
   VIRTUAL_COLUMN: string; HIDDEN_COLUMN: string; COLLATION: string | null;
 }
+interface CommentRow { COMMENTS: string | null; }
+interface ColumnCommentRow extends CommentRow { COLUMN_NAME: string; }
 interface ConstraintRow {
   OWNER: string; CONSTRAINT_NAME: string; CONSTRAINT_TYPE: string; GENERATED: string;
   STATUS: string; VALIDATED: string; DEFERRABLE: string; DEFERRED: string; RELY: string | null;
@@ -123,6 +125,10 @@ export class OracleCatalog implements SourceCatalog {
        WHERE t.owner=:owner AND t.table_name=:tableName`, binds);
     const table = rows[0];
     if (!table) throw new Error(`Missing or inaccessible table: ${qualifiedName(reference)}.`);
+    const tableComments = await queryRows<CommentRow>(this.connection, `
+      SELECT comments FROM dba_tab_comments
+       WHERE owner=:owner AND table_name=:tableName AND table_type='TABLE'`, binds);
+    if (tableComments.length !== 1) throw new Error(`Expected exactly one table comment row for ${qualifiedName(reference)}; found ${tableComments.length}.`);
     const unsupportedFeatures: string[] = [];
     if (table.IOT_TYPE) unsupportedFeatures.push(`Index-organized table: ${table.IOT_TYPE}`);
     if (table.CLUSTER_NAME) unsupportedFeatures.push(`Cluster: ${table.CLUSTER_NAME}`);
@@ -142,10 +148,27 @@ export class OracleCatalog implements SourceCatalog {
              char_used,data_precision,data_scale,nullable,data_default,default_on_null,virtual_column,hidden_column,collation
         FROM dba_tab_cols WHERE owner=:owner AND table_name=:tableName AND user_generated='YES'
        ORDER BY column_id NULLS LAST, internal_column_id`, binds);
+    const columnCommentRows = await queryRows<ColumnCommentRow>(this.connection, `
+      SELECT cc.column_name,cc.comments
+        FROM dba_col_comments cc
+        JOIN dba_tab_cols tc ON tc.owner=cc.owner AND tc.table_name=cc.table_name AND tc.column_name=cc.column_name
+       WHERE cc.owner=:owner AND cc.table_name=:tableName AND tc.user_generated='YES'`, binds);
+    const commentByColumn = new Map<string, string | null>();
+    for (const row of columnCommentRows) {
+      if (commentByColumn.has(row.COLUMN_NAME)) throw new Error(`Duplicate column comment row for ${qualifiedName(reference)}.${row.COLUMN_NAME}.`);
+      commentByColumn.set(row.COLUMN_NAME, row.COMMENTS);
+    }
+    const modeledNames = new Set(columnRows.map(row => row.COLUMN_NAME));
+    for (const name of commentByColumn.keys()) if (!modeledNames.has(name)) {
+      throw new Error(`Unexpected column comment row for ${qualifiedName(reference)}.${name}.`);
+    }
+    for (const name of modeledNames) if (!commentByColumn.has(name)) {
+      throw new Error(`Missing column comment row for ${qualifiedName(reference)}.${name}.`);
+    }
     const columns: ColumnDefinition[] = columnRows.map((column, position) => {
       const identity = identityByColumn.get(column.COLUMN_NAME);
       return {
-        name: column.COLUMN_NAME, position: position + 1,
+        name: column.COLUMN_NAME, position: position + 1, comment: commentByColumn.get(column.COLUMN_NAME)!,
         dataType: { name: column.DATA_TYPE, owner: column.DATA_TYPE_OWNER, byteLength: column.DATA_LENGTH,
           characterLength: column.CHAR_LENGTH ?? 0, lengthSemantics: column.CHAR_USED === 'C' ? 'CHAR' : column.CHAR_USED === 'B' ? 'BYTE' : null,
           precision: column.DATA_PRECISION, scale: column.DATA_SCALE },
@@ -174,7 +197,7 @@ export class OracleCatalog implements SourceCatalog {
         } else constraints.push({ ...properties, kind: 'check', expression: row.SEARCH_CONDITION });
       } else unsupportedFeatures.push(`Constraint ${row.CONSTRAINT_NAME} has unsupported type ${row.CONSTRAINT_TYPE}`);
     }
-    return { reference, role: 'target', unsupportedFeatures,
+    return { reference, role: 'target', comment: tableComments[0].COMMENTS, unsupportedFeatures,
       sourcePhysical: { tablespace: table.TABLESPACE_NAME, compression: table.COMPRESSION },
       columns, constraints, indexes: await this.indexes(reference) };
   }

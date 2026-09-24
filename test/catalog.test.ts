@@ -12,6 +12,8 @@ test('Oracle adapter reads full LONG expressions, ordered keys and actual index 
       let rows: unknown[] = [];
       if (sql.includes('FROM dba_tables')) rows = [{ TABLESPACE_NAME: 'PROD', COMPRESSION: 'DISABLED', IOT_TYPE: null, CLUSTER_NAME: null,
         NESTED: 'NO', SECONDARY: 'N', TEMPORARY: 'N', PARTITIONED: 'NO', ORACLE_MAINTAINED: 'N', SPECIAL_COUNT: 0 }];
+      else if (sql.includes('FROM dba_tab_comments')) rows = [{ COMMENTS: "Table's café" }];
+      else if (sql.includes('FROM dba_col_comments')) rows = [{ COLUMN_NAME: 'VALUE', COMMENTS: 'Value Ω' }];
       else if (sql.includes('FROM dba_tab_cols')) rows = [{ COLUMN_NAME: 'VALUE', COLUMN_ID: 1, INTERNAL_COLUMN_ID: 1, DATA_TYPE: 'NUMBER',
         DATA_TYPE_OWNER: null, DATA_LENGTH: 22, CHAR_LENGTH: 0, CHAR_USED: null, DATA_PRECISION: null, DATA_SCALE: null,
         NULLABLE: 'Y', DATA_DEFAULT: '1', DEFAULT_ON_NULL: 'NO', VIRTUAL_COLUMN: 'NO', HIDDEN_COLUMN: 'NO', COLLATION: null }];
@@ -26,6 +28,8 @@ test('Oracle adapter reads full LONG expressions, ordered keys and actual index 
     },
   } as unknown as Connection;
   const table = await new OracleCatalog(connection).table({ owner: 'APP', name: 'T' });
+  assert.equal(table.comment, "Table's café");
+  assert.equal(table.columns[0].comment, 'Value Ω');
   assert.equal(table.constraints[0].kind, 'check');
   if (table.constraints[0].kind === 'check') assert.equal(table.constraints[0].expression, longPredicate);
   assert.deepEqual(table.indexes[0].keys[0], { column: null, expression: 'ABS("VALUE")', direction: 'ASC' });

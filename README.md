@@ -99,7 +99,7 @@ cycles, cross-schema references and composite column order are retained.
 
 ## Intermediate model
 
-Both models have `formatVersion: 2`, a `kind` discriminator, source version/time,
+Both models have `formatVersion: 3`, a `kind` discriminator, source version/time,
 original table and view target lists, table and view definitions, prerequisites and diagnostics. The target
 adds `targetVersion: "23"` and the applied policy. The model is Oracle-aware, not a
 universal database abstraction.
@@ -109,6 +109,8 @@ The same definitions validate files at runtime; unknown fields and unsupported
 format versions fail explicitly. Important facts include:
 
 - Column order, exact Oracle datatype/precision/scale and BYTE/CHAR semantics.
+- Nullable table and column comments, preserved exactly from `DBA_TAB_COMMENTS`
+  and `DBA_COL_COMMENTS` and emitted before indexes and constraints.
 - Defaults as Oracle SQL expressions, DEFAULT ON NULL, virtual/invisible columns,
   identity generation/options and source nullability/collation.
 - PK/UK/not-null/check/FK definitions, ordered FK column pairs, referenced candidate
@@ -183,10 +185,12 @@ defaults; review expressions and required built-in components independently.
 
 1. Optional schema-only users.
 2. Every included table, with named NOT NULL constraints in column definitions.
-3. Every modeled index once, including supporting indexes.
-4. PK/UK/check constraints. PK/UK uses the already-created index explicitly.
-5. Cross-schema REFERENCES grants.
-6. Only original-target outgoing FKs.
+3. Table and column comments.
+4. Every modeled index once, including supporting indexes.
+5. PK/UK/check constraints. PK/UK uses the already-created index explicitly.
+6. Cross-schema REFERENCES grants.
+7. Only original-target outgoing FKs.
+8. Conventional views in dependency order.
 
 This eliminates the previous need to strip foreign-key DDL or guess whether
 DBMS_METADATA already emitted a supporting index. Composite FK order and the
@@ -224,11 +228,15 @@ Unsupported structures can still appear in source JSON, with recorded features;
 transformation produces a target and report with blocking diagnostics. Some
 unrepresentable or inaccessible catalog metadata fails extraction itself explicitly.
 
-No application rows, views, standalone sequences, triggers, stored programs,
-synonyms, jobs, security policies, comments, original grants, statistics, or full
+No application rows, view comments, schema comments, standalone sequences,
+triggers, stored programs, synonyms, jobs, security policies, comments on other
+object types, original grants, statistics, or full
 physical configuration are exported. System-managed LOB indexes and generated
 hidden columns are not emitted as independent objects. This version reconstructs
 a supported relational slice; it is not a universal database backup.
+
+Format v2 source and target artifacts are intentionally rejected; re-extract them.
+The object-selection document remains version 2.
 
 ## Diagnostics and file behavior
 

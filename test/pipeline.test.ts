@@ -47,9 +47,32 @@ test('generation orders all tables, indexes, candidate keys and FKs; composite o
   assert.ok(!sql.includes('GRANDPARENT')); assert.ok(!sql.includes('PROD_DATA')); assert.ok(!sql.includes('STORAGE ('));
 });
 test('runtime validation rejects unknown fields and format versions', () => {
+  assert.throws(() => sourceDocumentSchema.parse({ ...sourceFixture(), formatVersion: 2 }));
   assert.throws(() => sourceDocumentSchema.parse({ ...sourceFixture(), formatVersion: 999 }));
   assert.throws(() => sourceDocumentSchema.parse({ ...sourceFixture(), typo: true }));
   assert.throws(() => targetDocumentSchema.parse(sourceFixture()));
+});
+test('comments pass through and render exactly before indexes', () => {
+  const source = sourceFixture();
+  source.tables[0].comment = "Customer's orders & returns Ω";
+  source.tables[0].columns[0].comment = 'first line\nsecond line';
+  const target = transformSource(source);
+  assert.equal(target.tables[0].comment, source.tables[0].comment);
+  assert.equal(target.tables[0].columns[0].comment, source.tables[0].columns[0].comment);
+  const sql = generateSql(target);
+  assert.ok(sql.includes("UNISTR('\\03A9')"));
+  assert.ok(sql.includes('EXECUTE IMMEDIATE'));
+  assert.ok(sql.includes('CHR(10)'));
+  assert.ok(sql.indexOf('COMMENT ON TABLE') < sql.indexOf('CREATE UNIQUE INDEX'));
+  assert.ok(sql.split('\n').every(line => Buffer.byteLength(line, 'utf8') <= 2400));
+});
+test('null comments are omitted and long comments use bounded dynamic DDL', () => {
+  const target = transformSource(sourceFixture());
+  target.tables[0].comment = 'x'.repeat(3999);
+  const sql = generateSql(target);
+  assert.ok(sql.includes('EXECUTE IMMEDIATE'));
+  assert.ok(!sql.includes('COMMENT ON TABLE "SHARED"."PARENT"'));
+  assert.ok(sql.split('\n').every(line => Buffer.byteLength(line, 'utf8') <= 2400));
 });
 test('missing parent or mismatched ordered parent key blocks SQL', () => {
   const target = transformSource(sourceFixture()); target.tables.pop();
