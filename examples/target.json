@@ -1,0 +1,279 @@
+{
+  "formatVersion": 1,
+  "dialect": "oracle",
+  "sourceVersion": "19.0.0.0.0",
+  "extractedAt": "2026-09-22T00:00:00.000Z",
+  "targetTables": [
+    {
+      "owner": "APP",
+      "name": "CHILD"
+    }
+  ],
+  "tables": [
+    {
+      "reference": {
+        "owner": "APP",
+        "name": "CHILD"
+      },
+      "role": "target",
+      "unsupportedFeatures": [],
+      "sourcePhysical": {
+        "tablespace": "PROD_DATA",
+        "compression": "DISABLED"
+      },
+      "columns": [
+        {
+          "name": "TENANT_ID",
+          "position": 1,
+          "dataType": {
+            "name": "NUMBER",
+            "owner": null,
+            "byteLength": 22,
+            "characterLength": 0,
+            "lengthSemantics": null,
+            "precision": 10,
+            "scale": 0
+          },
+          "nullable": false,
+          "defaultExpression": null,
+          "defaultOnNull": false,
+          "virtual": false,
+          "invisible": false,
+          "identity": null,
+          "collation": null
+        },
+        {
+          "name": "ID",
+          "position": 2,
+          "dataType": {
+            "name": "NUMBER",
+            "owner": null,
+            "byteLength": 22,
+            "characterLength": 0,
+            "lengthSemantics": null,
+            "precision": 10,
+            "scale": 0
+          },
+          "nullable": false,
+          "defaultExpression": null,
+          "defaultOnNull": false,
+          "virtual": false,
+          "invisible": false,
+          "identity": null,
+          "collation": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "PK_CHILD",
+          "generatedName": false,
+          "state": {
+            "enabled": true,
+            "validated": true,
+            "deferrable": false,
+            "initiallyDeferred": false,
+            "rely": false
+          },
+          "kind": "primary-key",
+          "columns": [
+            "TENANT_ID",
+            "ID"
+          ],
+          "backingIndex": {
+            "owner": "APP",
+            "name": "PK_CHILD"
+          }
+        },
+        {
+          "name": "FK_CHILD_PARENT",
+          "generatedName": false,
+          "state": {
+            "enabled": true,
+            "validated": true,
+            "deferrable": false,
+            "initiallyDeferred": false,
+            "rely": false
+          },
+          "kind": "foreign-key",
+          "parentTable": {
+            "owner": "SHARED",
+            "name": "PARENT"
+          },
+          "parentConstraint": {
+            "owner": "SHARED",
+            "name": "PK_PARENT"
+          },
+          "columnPairs": [
+            {
+              "childColumn": "TENANT_ID",
+              "parentColumn": "TENANT_ID"
+            },
+            {
+              "childColumn": "ID",
+              "parentColumn": "ID"
+            }
+          ],
+          "onDelete": "NO ACTION"
+        }
+      ],
+      "indexes": [
+        {
+          "reference": {
+            "owner": "APP",
+            "name": "PK_CHILD"
+          },
+          "type": "NORMAL",
+          "unique": true,
+          "visible": true,
+          "status": "VALID",
+          "partitioned": false,
+          "compression": "DISABLED",
+          "keys": [
+            {
+              "column": "TENANT_ID",
+              "expression": null,
+              "direction": "ASC"
+            },
+            {
+              "column": "ID",
+              "expression": null,
+              "direction": "ASC"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "reference": {
+        "owner": "SHARED",
+        "name": "PARENT"
+      },
+      "role": "direct-parent",
+      "unsupportedFeatures": [],
+      "sourcePhysical": {
+        "tablespace": "PROD_DATA",
+        "compression": "DISABLED"
+      },
+      "columns": [
+        {
+          "name": "TENANT_ID",
+          "position": 1,
+          "dataType": {
+            "name": "NUMBER",
+            "owner": null,
+            "byteLength": 22,
+            "characterLength": 0,
+            "lengthSemantics": null,
+            "precision": 10,
+            "scale": 0
+          },
+          "nullable": false,
+          "defaultExpression": null,
+          "defaultOnNull": false,
+          "virtual": false,
+          "invisible": false,
+          "identity": null,
+          "collation": null
+        },
+        {
+          "name": "ID",
+          "position": 2,
+          "dataType": {
+            "name": "NUMBER",
+            "owner": null,
+            "byteLength": 22,
+            "characterLength": 0,
+            "lengthSemantics": null,
+            "precision": 10,
+            "scale": 0
+          },
+          "nullable": false,
+          "defaultExpression": null,
+          "defaultOnNull": false,
+          "virtual": false,
+          "invisible": false,
+          "identity": null,
+          "collation": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "PK_PARENT",
+          "generatedName": false,
+          "state": {
+            "enabled": true,
+            "validated": true,
+            "deferrable": false,
+            "initiallyDeferred": false,
+            "rely": false
+          },
+          "kind": "primary-key",
+          "columns": [
+            "TENANT_ID",
+            "ID"
+          ],
+          "backingIndex": {
+            "owner": "SHARED",
+            "name": "PK_PARENT"
+          }
+        }
+      ],
+      "indexes": [
+        {
+          "reference": {
+            "owner": "SHARED",
+            "name": "PK_PARENT"
+          },
+          "type": "NORMAL",
+          "unique": true,
+          "visible": true,
+          "status": "VALID",
+          "partitioned": false,
+          "compression": "DISABLED",
+          "keys": [
+            {
+              "column": "TENANT_ID",
+              "expression": null,
+              "direction": "ASC"
+            },
+            {
+              "column": "ID",
+              "expression": null,
+              "direction": "ASC"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "prerequisites": [],
+  "diagnostics": [
+    {
+      "severity": "change",
+      "code": "TARGET_STORAGE",
+      "object": "\"APP\".\"CHILD\"",
+      "message": "Use deferred allocation and destination default storage; omit source tablespace, compression and allocation settings."
+    },
+    {
+      "severity": "change",
+      "code": "OMIT_PARENT_FK",
+      "object": "\"SHARED\".\"PARENT\"/FK_PARENT_GRANDPARENT",
+      "message": "Omitted outgoing FK to \"OTHER\".\"GRANDPARENT\" because this table is a parent-only inclusion."
+    },
+    {
+      "severity": "change",
+      "code": "TARGET_STORAGE",
+      "object": "\"SHARED\".\"PARENT\"",
+      "message": "Use deferred allocation and destination default storage; omit source tablespace, compression and allocation settings."
+    }
+  ],
+  "kind": "target",
+  "targetVersion": "23",
+  "policy": {
+    "version": 1,
+    "createSchemas": true,
+    "defaultTablespace": "USERS",
+    "maxStringSize": "STANDARD",
+    "externalPrerequisites": []
+  }
+}

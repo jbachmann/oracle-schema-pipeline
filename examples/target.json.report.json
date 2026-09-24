@@ -1,0 +1,20 @@
+[
+  {
+    "severity": "change",
+    "code": "TARGET_STORAGE",
+    "object": "\"APP\".\"CHILD\"",
+    "message": "Use deferred allocation and destination default storage; omit source tablespace, compression and allocation settings."
+  },
+  {
+    "severity": "change",
+    "code": "OMIT_PARENT_FK",
+    "object": "\"SHARED\".\"PARENT\"/FK_PARENT_GRANDPARENT",
+    "message": "Omitted outgoing FK to \"OTHER\".\"GRANDPARENT\" because this table is a parent-only inclusion."
+  },
+  {
+    "severity": "change",
+    "code": "TARGET_STORAGE",
+    "object": "\"SHARED\".\"PARENT\"",
+    "message": "Use deferred allocation and destination default storage; omit source tablespace, compression and allocation settings."
+  }
+]
