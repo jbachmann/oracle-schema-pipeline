@@ -1,5 +1,5 @@
 import { renderIdentity } from './identity.js';
-import { quoteIdentifier, qualifiedName, type ConstraintDefinition, type TableDefinition, type TargetDocument } from './model.js';
+import { quoteIdentifier, qualifiedName, objectKey, type ConstraintDefinition, type TableDefinition, type TargetDocument } from './model.js';
 import { assertValidTarget } from './validate.js';
 import { renderDataType } from './types.js';
 
@@ -28,13 +28,13 @@ export function generateSql(input: unknown): string {
   const document = assertValidTarget(input);
   const tables = [...document.tables].sort((left, right) => qualifiedName(left.reference) < qualifiedName(right.reference) ? -1 : 1);
   const statements: string[] = [
-    '-- Generated from oracle-schema-pipeline format 1. No source DDL was replayed.',
+    "-- Generated from oracle-schema-pipeline format " + document.formatVersion + ". No source DDL was replayed.",
     'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK', 'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
     'SET DEFINE OFF', 'SET SQLBLANKLINES ON', 'SET ECHO ON',
     'ALTER SESSION SET DEFERRED_SEGMENT_CREATION=TRUE;',
   ];
   if (document.policy.createSchemas) {
-    for (const owner of [...new Set(tables.map(table => table.reference.owner))].sort()) {
+    for (const owner of [...new Set([...tables.map(table => table.reference.owner), ...document.views.map(view => view.reference.owner)])].sort()) {
       const tablespace = quoteIdentifier(document.policy.defaultTablespace);
       statements.push(`CREATE USER ${quoteIdentifier(owner)} NO AUTHENTICATION DEFAULT TABLESPACE ${tablespace} QUOTA UNLIMITED ON ${tablespace};`);
     }
@@ -85,7 +85,19 @@ export function generateSql(input: unknown): string {
     const deleteClause = constraint.onDelete === 'NO ACTION' ? '' : ` ON DELETE ${constraint.onDelete}`;
     statements.push(`ALTER TABLE ${qualifiedName(table.reference)} ADD CONSTRAINT ${quoteIdentifier(constraint.name)} FOREIGN KEY (${childColumns}) REFERENCES ${qualifiedName(constraint.parentTable)} (${parentColumns})${deleteClause} ${constraintState(constraint)};`);
   }
-  statements.push('PROMPT Schema reconstruction completed.');
+  {
+    statements.push("-- Phase 6: conventional views.");
+    const pending = new Map(document.views.map(view => [objectKey(view.reference), view])), ordered = [];
+    while (pending.size) { const ready = [...pending].filter(([, view]) => view.dependencies.filter(edge => edge.type === "VIEW" && !edge.databaseLink).every(edge => !pending.has(objectKey(edge.reference)))).sort(([a], [b]) => a.localeCompare(b)); if (!ready.length) throw new Error("VIEW_DEPENDENCY_CYCLE"); for (const [key, view] of ready) { ordered.push(view); pending.delete(key); } }
+    const grants = new Set<string>();
+    for (const view of ordered) {
+      for (const edge of view.dependencies) if (!edge.databaseLink && edge.reference.owner !== view.reference.owner) { const grant = "GRANT SELECT ON " + qualifiedName(edge.reference) + " TO " + quoteIdentifier(view.reference.owner) + ";"; if (!grants.has(grant)) { statements.push(grant); grants.add(grant); } }
+      const columns = view.columns.map(quoteIdentifier).join(", "), bequeath = view.bequeath === "CURRENT_USER" ? " BEQUEATH CURRENT_USER" : " BEQUEATH DEFINER";
+      const restriction = view.readOnly ? " WITH READ ONLY" : view.checkOption === "NONE" ? "" : " WITH " + view.checkOption + " CHECK OPTION";
+      statements.push("CREATE VIEW " + qualifiedName(view.reference) + " (" + columns + ")" + bequeath + " AS " + view.query.trim() + restriction + ";");
+    }
+  }
+  statements.push("PROMPT Schema reconstruction completed.");
   const sql = statements.join('\n\n') + '\n';
   if (sql.split('\n').some(line => Buffer.byteLength(line, 'utf8') > 2400)) throw new Error('SQL exceeds the conservative SQL*Plus input-line limit; use a reviewed SQLcl output policy.');
   return sql;

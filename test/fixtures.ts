@@ -26,6 +26,6 @@ export function sourceFixture(): SourceDocument {
   child.constraints.push(fk('FK_CHILD_PARENT', parent.reference));
   parent.role = 'direct-parent';
   parent.constraints.push(fk('FK_PARENT_GRANDPARENT', { owner: 'OTHER', name: 'GRANDPARENT' }));
-  return sourceDocumentSchema.parse({ formatVersion: 1, kind: 'source', dialect: 'oracle', sourceVersion: '19.0.0.0.0',
-    extractedAt: '2026-09-22T00:00:00.000Z', targetTables: [child.reference], tables: [child, parent], prerequisites: [], diagnostics: [] });
+  return sourceDocumentSchema.parse({ formatVersion: 2, kind: 'source', dialect: 'oracle', sourceVersion: '19.0.0.0.0',
+    extractedAt: '2026-09-22T00:00:00.000Z', targetTables: [child.reference], targetViews: [], views: [], tables: [child, parent], prerequisites: [], diagnostics: [] });
 }

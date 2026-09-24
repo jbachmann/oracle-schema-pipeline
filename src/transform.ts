@@ -20,7 +20,7 @@ export function transformSource(sourceInput: unknown, policyInput: unknown = {})
     });
     changes.push({ severity: 'change', code: 'TARGET_STORAGE', object: qualifiedName(table.reference),
       message: 'Use deferred allocation and destination default storage; omit source tablespace, compression and allocation settings.' });
-    return { ...table, role: isTarget ? 'target' as const : 'direct-parent' as const, constraints };
+    return { ...table, role: isTarget ? 'target' as const : table.role, constraints };
   });
   const target = targetDocumentSchema.parse({ ...source, kind: 'target', targetVersion: '23', policy, tables,
     diagnostics: [...source.diagnostics, ...changes] });

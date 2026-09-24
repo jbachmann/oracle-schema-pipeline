@@ -17,7 +17,7 @@ test('one-hop extraction captures parent FK facts but never fetches grandparent 
     async table(reference) { fetched.push(reference.name); return structuredClone(fixture.tables.find(table => objectKey(table.reference) === objectKey(reference))!); },
     async prerequisites() { return []; },
   };
-  const source = await extractSource(catalog, fixture.targetTables);
+  const source = await extractSource(catalog, { version: 2, tables: fixture.targetTables, views: [] });
   assert.deepEqual(rootLookups, ['CHILD']); assert.deepEqual(fetched, ['CHILD', 'PARENT']);
   assert.ok(source.tables[1].constraints.some(constraint => constraint.name === 'FK_PARENT_GRANDPARENT'));
 });

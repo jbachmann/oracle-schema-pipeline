@@ -16,7 +16,7 @@ export function validateTarget(input: unknown): Diagnostic[] {
   for (const table of document.tables) {
     const tableName = qualifiedName(table.reference);
     const isTarget = targetKeys.has(objectKey(table.reference));
-    if (table.role !== (isTarget ? 'target' : 'direct-parent')) error('ROLE_MISMATCH', tableName, 'Table role disagrees with the original target list.');
+    if (table.role === 'target' !== isTarget) error('ROLE_MISMATCH', tableName, 'Table role disagrees with the original target list.');
     for (const feature of table.unsupportedFeatures) error('UNSUPPORTED_FEATURE', tableName, feature);
     const columnNames = new Set(table.columns.map(column => column.name));
     if (columnNames.size !== table.columns.length) error('DUPLICATE_COLUMN', tableName, 'Column names must be unique.');
@@ -95,7 +95,27 @@ export function validateTarget(input: unknown): Diagnostic[] {
       }
     }
   }
-  for (const table of document.tables) if (!expectedTables.has(objectKey(table.reference))) error('EXTRA_TABLE', qualifiedName(table.reference), 'Table is outside the one-hop target slice.');
+    {
+    const viewsByKey = new Map(document.views.map(view => [objectKey(view.reference), view]));
+    const viewTargets = new Set(document.targetViews.map(objectKey));
+    if (viewsByKey.size !== document.views.length) error("DUPLICATE_VIEW", "document", "View identities must be unique.");
+    for (const root of document.targetViews) if (!viewsByKey.has(objectKey(root))) error("MISSING_TARGET", qualifiedName(root), "Requested view definition is absent.");
+    for (const view of document.views) {
+      const name = qualifiedName(view.reference);
+      if (view.role !== (viewTargets.has(objectKey(view.reference)) ? "target" : "dependency")) error("ROLE_MISMATCH", name, "View role disagrees with target list.");
+      if (view.status !== "VALID") error("INVALID_VIEW", name, "Cannot reconstruct invalid view.");
+      for (const feature of view.unsupportedFeatures) error("UNSUPPORTED_VIEW", name, feature);
+      for (const edge of view.dependencies) {
+        if (edge.databaseLink) error("REMOTE_VIEW_DEPENDENCY", name, "Remote view dependency is unsupported.");
+        else if (edge.type === "TABLE") { expectedTables.add(objectKey(edge.reference)); if (!tablesByKey.has(objectKey(edge.reference))) error("MISSING_VIEW_DEPENDENCY", name, "Required table is absent."); }
+        else if (edge.type === "VIEW") { if (!viewsByKey.has(objectKey(edge.reference))) error("MISSING_VIEW_DEPENDENCY", name, "Required view is absent."); }
+        else error("UNSUPPORTED_VIEW_DEPENDENCY", name, "Only TABLE and VIEW dependencies are supported.");
+      }
+    }
+    const pending = new Map(document.views.map(view => [objectKey(view.reference), new Set(view.dependencies.filter(edge => edge.type === "VIEW" && !edge.databaseLink).map(edge => objectKey(edge.reference)))]));
+    while (pending.size) { const ready = [...pending].filter(([, deps]) => [...deps].every(key => !pending.has(key))); if (!ready.length) { error("VIEW_DEPENDENCY_CYCLE", "document", "View dependency graph contains a cycle."); break; } for (const [key] of ready) pending.delete(key); }
+  }
+  for (const table of document.tables) if (!expectedTables.has(objectKey(table.reference))) error('EXTRA_TABLE', qualifiedName(table.reference), 'Table is outside the requested dependency closure.');
   for (const prerequisite of document.prerequisites) {
     const allowed = document.policy.externalPrerequisites.some(item => item.type === prerequisite.type && objectKey(item.reference) === objectKey(prerequisite.reference));
     if (prerequisite.databaseLink) error('REMOTE_PREREQUISITE', qualifiedName(prerequisite.requiredBy), 'Remote dependencies are unsupported.');

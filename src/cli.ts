@@ -1,6 +1,6 @@
 import { readFile, access } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
-import { sourceDocumentSchema, targetDocumentSchema, tableListSchema, policySchema } from './model.js';
+import { sourceDocumentSchema, targetDocumentSchema, selectionSchema, policySchema } from './model.js';
 import { transformSource, transformationReport } from './transform.js';
 import { validateTarget } from './validate.js';
 import { generateSql } from './generate.js';
@@ -14,12 +14,12 @@ function requireOption(value: string | undefined, name: string): string {
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     help: { type: 'boolean' }, dsn: { type: 'string' }, user: { type: 'string' },
-    tables: { type: 'string' }, input: { type: 'string' }, output: { type: 'string' },
+    objects: { type: 'string' }, input: { type: 'string' }, output: { type: 'string' },
     policy: { type: 'string' }, report: { type: 'string' },
   } });
   if (values.help || !positionals.length) {
     console.log(`Oracle schema pipeline (Node.js 22+)
-  npm run schema -- extract --dsn host:1521/PDB --user EXPORT_READER --tables tables.json --output source.json
+  npm run schema -- extract --dsn host:1521/PDB --user EXPORT_READER --objects objects.json --output source.json
   npm run schema -- transform --input source.json --policy policy.json --output target.json
   npm run schema -- validate --input target.json [--report validation.json]
   npm run schema -- generate --input target.json --output clone.sql
@@ -38,7 +38,7 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   }
   if (command === 'extract') {
-    const requestedTables = tableListSchema.parse(await readJson(requireOption(values.tables, 'tables')));
+    const selection = selectionSchema.parse(await readJson(requireOption(values.objects, 'objects')));
     // Driver and catalog are loaded only for extraction. Offline stages do not
     // establish a connection or require Oracle credentials or client libraries.
     const [{ default: oracle }, { OracleCatalog }, { extractSource }, { readPassword }] = await Promise.all([
@@ -49,7 +49,7 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
     });
     try {
       connection.callTimeout = 300_000;
-      const source = await extractSource(new OracleCatalog(connection), requestedTables);
+      const source = await extractSource(new OracleCatalog(connection), selection);
       await writeJson(values.output!, source);
       console.log(`Extracted ${source.tables.length} table definitions to ${values.output}.`);
     } finally { await connection.close(); }

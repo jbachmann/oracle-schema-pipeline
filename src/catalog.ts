@@ -1,7 +1,7 @@
 import oracle, { type BindParameters, type Connection } from 'oracledb';
 import type { SourceCatalog } from './extract.js';
 import { qualifiedName, objectKey, type ColumnDefinition, type ConstraintDefinition, type ForeignKeyDefinition,
-  type IndexDefinition, type ObjectReference, type Prerequisite, type TableDefinition } from './model.js';
+  type IndexDefinition, type ObjectReference, type Prerequisite, type TableDefinition, type ViewDefinition } from './model.js';
 
 interface TableRow {
   TABLESPACE_NAME: string | null; COMPRESSION: string | null; IOT_TYPE: string | null;
@@ -202,6 +202,25 @@ export class OracleCatalog implements SourceCatalog {
       });
     }
     return definitions;
+  }
+
+  async view(reference: ObjectReference): Promise<ViewDefinition> {
+    const binds = { owner: reference.owner, viewName: reference.name };
+    const rows = await queryRows<any>(this.connection, `SELECT v.text,v.read_only,v.bequeath,v.editioning_view,v.container_data,v.default_collation,v.type_text,v.superview_name,o.status,u.oracle_maintained FROM dba_views v JOIN dba_objects o ON o.owner=v.owner AND o.object_name=v.view_name AND o.object_type='VIEW' JOIN dba_users u ON u.username=v.owner WHERE v.owner=:owner AND v.view_name=:viewName`, binds);
+    const row = rows[0];
+    if (!row) throw new Error("Missing or inaccessible view: " + qualifiedName(reference));
+    const columns = await queryRows<{ COLUMN_NAME: string }>(this.connection, "SELECT column_name FROM dba_tab_columns WHERE owner=:owner AND table_name=:viewName ORDER BY column_id", binds);
+    const unsupportedFeatures: string[] = [];
+    if (row.ORACLE_MAINTAINED !== "N") unsupportedFeatures.push("Oracle-maintained schema");
+    if (row.EDITIONING_VIEW === "Y") unsupportedFeatures.push("Editioning view");
+    if (row.TYPE_TEXT || row.SUPERVIEW_NAME) unsupportedFeatures.push("Typed or superview");
+    if (row.CONTAINER_DATA === "Y") unsupportedFeatures.push("Container-data view");
+    return { reference, role: "target", columns: columns.map(column => column.COLUMN_NAME), query: row.TEXT, readOnly: row.READ_ONLY === "Y", checkOption: "NONE", bequeath: row.BEQUEATH ?? "DEFINER", status: row.STATUS, collation: row.DEFAULT_COLLATION, editioning: row.EDITIONING_VIEW === "Y", typed: Boolean(row.TYPE_TEXT), superview: Boolean(row.SUPERVIEW_NAME), containerData: row.CONTAINER_DATA === "Y", dependencies: [], unsupportedFeatures };
+  }
+
+  async viewDependencies(reference: ObjectReference): Promise<ViewDefinition["dependencies"]> {
+    const rows = await queryRows<any>(this.connection, `SELECT DISTINCT referenced_owner,referenced_name,referenced_type,referenced_link_name FROM dba_dependencies WHERE owner=:owner AND name=:viewName AND type='VIEW' ORDER BY referenced_owner,referenced_name,referenced_type`, { owner: reference.owner, viewName: reference.name });
+    return rows.map(row => ({ reference: { owner: row.REFERENCED_OWNER ?? "PUBLIC", name: row.REFERENCED_NAME }, type: row.REFERENCED_TYPE, databaseLink: row.REFERENCED_LINK_NAME }));
   }
 
   async prerequisites(table: ObjectReference): Promise<Prerequisite[]> {

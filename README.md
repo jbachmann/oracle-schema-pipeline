@@ -60,7 +60,7 @@ Connect to the source PDB containing the tables, not the CDB root:
 npm run schema -- extract \
   --dsn source-host:1521/SOURCEPDB \
   --user EXPORT_READER \
-  --tables tables.json \
+  --objects objects.json \
   --output source.json
 ```
 
@@ -97,8 +97,8 @@ cycles, cross-schema references and composite column order are retained.
 
 ## Intermediate model
 
-Both models have `formatVersion: 1`, a `kind` discriminator, source version/time,
-original target list, table definitions, prerequisites and diagnostics. The target
+Both models have `formatVersion: 2`, a `kind` discriminator, source version/time,
+original table and view target lists, table and view definitions, prerequisites and diagnostics. The target
 adds `targetVersion: "23"` and the applied policy. The model is Oracle-aware, not a
 universal database abstraction.
 
@@ -138,7 +138,7 @@ An example `policy.json` is included:
 }
 ```
 
-Omitting `--policy` uses these defaults. The v1 transformation always omits
+Omitting `--policy` uses these defaults. The transformation always omits
 parent-only outgoing FKs; there is no recursive mode or silent fallback.
 
 The generator always omits source tablespaces, allocation clauses, physical

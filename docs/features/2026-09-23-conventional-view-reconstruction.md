@@ -98,14 +98,9 @@ Replace the table-array input with a versioned selection object:
 }
 ```
 
-Require at least one combined table/view root. Continue accepting the current
-array form as a legacy tables-only request so existing CLI automation still works.
-Keep `--tables` as a deprecated alias for one release and add the clearer
-`--objects` option; reject supplying both.
+Require at least one combined table/view root. Use the versioned selection object through `--objects`; the former table-array input and `--tables` option are removed.
 
-Introduce `formatVersion: 2` source and target schemas while retaining v1 parsers
-for existing artifacts. Transform/validate/generate must dispatch by version. V1
-behavior and output remain unchanged.
+Use `formatVersion: 2` source and target schemas exclusively. Earlier artifacts must be re-extracted.
 
 V2 adds:
 
@@ -180,7 +175,7 @@ Do not use `OR REPLACE`, `FORCE`, or source DDL replay.
 
 1. Add ADR 0002 and update `README.md` scope, examples, credentials, dependency
    behavior, trusted SQL warning, generation order, and supported subset.
-2. Add v2 selection/document/view schemas and v1/v2 dispatch in `src/model.ts`.
+2. Add version 2 selection, document, and view schemas in `src/model.ts`.
 3. Extend `src/catalog.ts` with full view text, metadata, and dependency queries;
    add mocked `LONG`, specialized-view, remote, and non-table cases to
    `test/catalog.test.ts`.
@@ -193,7 +188,7 @@ Do not use `OR REPLACE`, `FORCE`, or source DDL replay.
    validation and generation.
 7. Update `src/generate.ts` with cross-schema `SELECT` grants and the final view
    phase. Preserve current table/index/FK ordering.
-8. Update `src/cli.ts`, examples, and CLI tests for `--objects`, legacy `--tables`,
+8. Update `src/cli.ts`, examples, and CLI tests for `--objects`,
    mixed roots, and non-overwriting output.
 9. Expand `docker/oracle/source-init/01-seed.sql` substantially: add conventional
    views in multiple schemas, view-on-view chains, a diamond dependency graph,
@@ -212,7 +207,7 @@ Do not use `OR REPLACE`, `FORCE`, or source DDL replay.
 
 ## Test Plan
 
-- Unit: selection parsing, v1 compatibility, graph closure, deterministic order,
+- Unit: selection parsing, version rejection, graph closure, deterministic order,
   duplicate roots, mixed roles, view-on-view chains/diamonds, and cycles.
 - Catalog: full `LONG` text, separate `BEQUEATH`, ordered aliases, validity,
   supported flags, remote links, and unsupported dependency types.
@@ -234,7 +229,7 @@ Do not use `OR REPLACE`, `FORCE`, or source DDL replay.
 - [ ] Views are emitted only after all table, index, constraint, grant, and FK DDL.
 - [ ] View-on-view ordering is deterministic; cycles block generation.
 - [ ] Required cross-schema `SELECT` grants precede dependent view creation.
-- [ ] Existing table-only v1 artifacts and legacy selection input still work.
+- [ ] Table-only version 2 selections continue to work.
 - [ ] Existing index extraction, validation, ordering, and round-trip equality do
       not change.
 - [ ] Expanded seed data exercises realistic multi-schema view graphs.

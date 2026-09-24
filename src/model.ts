@@ -6,7 +6,10 @@ export const identifierSchema = z.string().min(1).refine(value =>
   Buffer.byteLength(value, 'utf8') <= 128 && !/[\x00-\x1f]/u.test(value), 'Invalid Oracle identifier');
 export const objectReferenceSchema = z.object({ owner: identifierSchema, name: identifierSchema }).strict();
 export type ObjectReference = z.infer<typeof objectReferenceSchema>;
-export const tableListSchema = z.array(objectReferenceSchema).min(1);
+export const selectionSchema = z.object({ version: z.literal(2), tables: z.array(objectReferenceSchema).default([]),
+  views: z.array(objectReferenceSchema).default([]) }).strict()
+  .refine(value => value.tables.length + value.views.length > 0, 'At least one table or view is required.');
+export type ObjectSelection = z.infer<typeof selectionSchema>;
 
 export const diagnosticSchema = z.object({
   severity: z.enum(['error', 'warning', 'change']), code: z.string(), object: z.string(), message: z.string(),
@@ -66,7 +69,7 @@ export type IndexDefinition = z.infer<typeof indexSchema>;
 
 export const tableSchema = z.object({
   reference: objectReferenceSchema,
-  role: z.enum(['target', 'direct-parent']),
+  role: z.enum(['target', 'direct-parent', 'view-dependency']),
   // Features cannot be silently discarded. Nonempty entries block generation.
   unsupportedFeatures: z.array(z.string()),
   sourcePhysical: z.object({ tablespace: z.string().nullable(), compression: z.string().nullable() }).strict(),
@@ -75,18 +78,28 @@ export const tableSchema = z.object({
   indexes: z.array(indexSchema),
 }).strict();
 export type TableDefinition = z.infer<typeof tableSchema>;
+export const viewDependencySchema = z.object({ reference: objectReferenceSchema,
+  type: z.string(), databaseLink: z.string().nullable() }).strict();
+export type ViewDependency = z.infer<typeof viewDependencySchema>;
+export const viewSchema = z.object({
+  reference: objectReferenceSchema, role: z.enum(['target', 'dependency']), columns: z.array(identifierSchema).min(1),
+  query: z.string().min(1), readOnly: z.boolean(), checkOption: z.enum(['NONE', 'LOCAL', 'CASCADED']),
+  bequeath: z.enum(['DEFINER', 'CURRENT_USER']), status: z.string(), collation: z.string().nullable(),
+  editioning: z.boolean(), typed: z.boolean(), superview: z.boolean(), containerData: z.boolean(),
+  dependencies: z.array(viewDependencySchema), unsupportedFeatures: z.array(z.string()),
+}).strict();
+export type ViewDefinition = z.infer<typeof viewSchema>;
 
 export const prerequisiteSchema = z.object({
   requiredBy: objectReferenceSchema, reference: objectReferenceSchema, type: z.string(), databaseLink: z.string().nullable(),
 }).strict();
 export type Prerequisite = z.infer<typeof prerequisiteSchema>;
 const commonDocumentProperties = {
-  formatVersion: z.literal(1), dialect: z.literal('oracle'),
-  sourceVersion: z.string(), extractedAt: z.string().datetime(),
-  targetTables: tableListSchema, tables: z.array(tableSchema).min(1),
-  prerequisites: z.array(prerequisiteSchema), diagnostics: z.array(diagnosticSchema),
+  formatVersion: z.literal(2), dialect: z.literal("oracle"), sourceVersion: z.string(), extractedAt: z.string().datetime(),
+  targetTables: z.array(objectReferenceSchema), targetViews: z.array(objectReferenceSchema),
+  tables: z.array(tableSchema), views: z.array(viewSchema), prerequisites: z.array(prerequisiteSchema), diagnostics: z.array(diagnosticSchema),
 };
-export const sourceDocumentSchema = z.object({ ...commonDocumentProperties, kind: z.literal('source') }).strict();
+export const sourceDocumentSchema = z.object({ ...commonDocumentProperties, kind: z.literal("source") }).strict();
 export type SourceDocument = z.infer<typeof sourceDocumentSchema>;
 
 export const policySchema = z.object({
@@ -98,9 +111,8 @@ export const policySchema = z.object({
   externalPrerequisites: z.array(z.object({ reference: objectReferenceSchema, type: z.string() }).strict()).default([]),
 }).strict();
 export type TargetPolicy = z.infer<typeof policySchema>;
-export const targetDocumentSchema = z.object({
-  ...commonDocumentProperties, kind: z.literal('target'), targetVersion: z.literal('23'), policy: policySchema,
-}).strict();
+export const targetDocumentSchema = z.object({ ...commonDocumentProperties, kind: z.literal("target"),
+  targetVersion: z.literal("23"), policy: policySchema }).strict();
 export type TargetDocument = z.infer<typeof targetDocumentSchema>;
 
 export function objectKey(reference: ObjectReference): string {
