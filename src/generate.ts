@@ -179,6 +179,8 @@ export function generateSql(input: unknown): string {
     }
   {
     statements.push('-- Phase 7: conventional views.');
+    // Kahn-style ordering: a view becomes ready once none of its local view
+    // dependencies remain pending. Sorting each layer makes output reproducible.
     const pending = new Map(
         document.views.map((view) => [objectKey(view.reference), view]),
       ),
@@ -199,6 +201,8 @@ export function generateSql(input: unknown): string {
     }
     const grants = new Set<string>();
     for (const view of ordered) {
+      // Emit cross-schema grants immediately before the first dependent view;
+      // Oracle requires the view owner to hold these privileges directly.
       for (const edge of view.dependencies)
         if (
           !edge.databaseLink &&

@@ -32,6 +32,8 @@ export async function extractSource(
     targetViews = uniqueReferences(selection.views);
   const tableTargets = new Set(targetTables.map(objectKey)),
     viewTargets = new Set(targetViews.map(objectKey));
+  // Walk views transitively, but collect table edges separately: views must be
+  // recreated in dependency order while their base tables belong in phase one.
   const queue = [...targetViews],
     seen = new Set<string>(),
     views: ViewDefinition[] = [],
@@ -53,6 +55,9 @@ export async function extractSource(
       }
   }
   const parents: ObjectReference[] = [];
+  // Only direct FK parents are included. Their own outgoing FKs are later
+  // removed by transformation, keeping the dependency closure intentionally
+  // bounded instead of recursively cloning the surrounding schema.
   for (const target of targetTables)
     for (const fk of await catalog.foreignKeys(target))
       parents.push(fk.parentTable);

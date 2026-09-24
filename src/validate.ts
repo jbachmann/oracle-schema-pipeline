@@ -22,6 +22,8 @@ export function validateTarget(input: unknown): Diagnostic[] {
     document.tables.map((table) => [objectKey(table.reference), table]),
   );
   const targetKeys = new Set(document.targetTables.map(objectKey));
+  // Grow this from requested roots as modeled FK and view edges are checked.
+  // The final comparison rejects unrelated tables smuggled into the artifact.
   const expectedTables = new Set(targetKeys);
   const constraintNames = new Set<string>(),
     indexNames = new Set<string>();
@@ -402,6 +404,8 @@ export function validateTarget(input: unknown): Diagnostic[] {
         ),
       ]),
     );
+    // Mirror generation's topological sort here so cycles become diagnostics,
+    // rather than a late SQL-generation failure.
     while (pending.size) {
       const ready = [...pending].filter(([, deps]) =>
         [...deps].every((key) => !pending.has(key)),

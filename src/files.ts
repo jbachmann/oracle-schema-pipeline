@@ -20,6 +20,8 @@ export async function writeNewBuffer(
   } finally {
     await handle.close();
   }
+  // COPYFILE_EXCL closes the existence-check race in the no-overwrite
+  // contract. Keep the partial file on failure as evidence/recovery material.
   await copyFile(partial, path, constants.COPYFILE_EXCL);
   await unlink(partial);
 }
