@@ -1,4 +1,4 @@
--- Generated from oracle-schema-pipeline format 3. No source DDL was replayed.
+-- Generated from oracle-schema-pipeline format 4. No source DDL was replayed.
 
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
 

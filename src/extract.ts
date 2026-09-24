@@ -80,7 +80,7 @@ export async function extractSource(
     prerequisites.push(...(await catalog.prerequisites(reference)));
   }
   return sourceDocumentSchema.parse({
-    formatVersion: 3,
+    formatVersion: 4,
     kind: 'source',
     dialect: 'oracle',
     sourceVersion: await catalog.databaseVersion(),

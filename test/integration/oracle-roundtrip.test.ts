@@ -1,3 +1,7 @@
+import { OracleCatalog } from '../../src/catalog.js';
+import { extractSource } from '../../src/extract.js';
+import { transformSource } from '../../src/transform.js';
+import { buildDictionaryWorkbook } from '../../src/dictionary.js';
 import { generateSql } from '../../src/generate.js';
 import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -347,5 +351,116 @@ SET HEADING OFF FEEDBACK OFF PAGES 0
 SELECT COUNT(*) FROM FINANCE.open_order_finance;`,
     );
     assert.match(queryResult.replace(/\s/gu, ''), /0/);
+  },
+);
+
+test(
+  'view restriction facts agree with Oracle, workbook and replay behavior',
+  { timeout: 180_000 },
+  async () => {
+    const connection = await oracle.getConnection({
+      user: 'SYSTEM',
+      password,
+      connectString:
+        process.env.ORACLE_DESTINATION_DSN ??
+        (await publishedDsn('oracle-destination')),
+    });
+    const owner = 'CATALOG';
+    const table = 'CATALOG_DECODE_PROBE';
+    const cases = [
+      {
+        name: 'CATALOG_DECODE_PLAIN',
+        suffix: '',
+        readOnly: false,
+        check: 'NONE',
+        type: null,
+      },
+      {
+        name: 'CATALOG_DECODE_RO',
+        suffix: ' WITH READ ONLY',
+        readOnly: true,
+        check: 'NONE',
+        type: 'O',
+      },
+      {
+        name: 'CATALOG_DECODE_CHECK',
+        suffix: ' WITH CHECK OPTION CONSTRAINT CATALOG_DECODE_CK',
+        readOnly: false,
+        check: 'CASCADED',
+        type: 'V',
+      },
+    ];
+    const created = new Set<string>();
+    let tableCreated = false;
+    try {
+      await connection.execute(`CREATE TABLE ${owner}.${table} (ID NUMBER)`);
+      tableCreated = true;
+      await connection.execute(`INSERT INTO ${owner}.${table} VALUES (1)`);
+      await connection.commit();
+      for (const item of cases) {
+        await connection.execute(
+          `CREATE VIEW ${owner}.${item.name} AS SELECT ID FROM ${owner}.${table} WHERE ID > 0${item.suffix}`,
+        );
+        created.add(item.name);
+      }
+      const source = await extractSource(new OracleCatalog(connection), {
+        version: 2,
+        tables: [],
+        views: cases.map(({ name }) => ({ owner, name })),
+      });
+      const workbook = buildDictionaryWorkbook(source).getWorksheet('Views')!;
+      const sql = generateSql(transformSource(source));
+      for (const item of cases) {
+        const view = source.views.find(
+          (view) => view.reference.name === item.name,
+        )!;
+        assert.equal(view.readOnly, item.readOnly);
+        assert.equal(view.checkOption, item.check);
+        const row = workbook
+          .getRows(2, cases.length)!
+          .find((row) => row.getCell(2).value === item.name)!;
+        assert.equal(row.getCell(6).value, item.readOnly ? 'TRUE' : 'FALSE');
+        assert.equal(row.getCell(7).value, item.check);
+        const statement = sql
+          .match(/CREATE VIEW [\s\S]*?;/g)!
+          .find((statement) => statement.includes(`"${item.name}"`))!;
+        assert.equal(
+          (statement.match(/WITH (?:READ ONLY|CHECK OPTION)/g) ?? []).length,
+          item.type ? 1 : 0,
+        );
+        await connection.execute(`DROP VIEW ${owner}.${item.name}`);
+        created.delete(item.name);
+        await connection.execute(statement.slice(0, -1));
+        created.add(item.name);
+        const facts = await connection.execute<{
+          READ_ONLY: string;
+          CONSTRAINT_TYPE: string | null;
+        }>(
+          `SELECT v.read_only,c.constraint_type FROM all_views v LEFT JOIN all_constraints c
+          ON c.owner=v.owner AND c.table_name=v.view_name AND c.constraint_type IN ('O','V')
+          WHERE v.owner=:owner AND v.view_name=:name`,
+          { owner, name: item.name },
+          { outFormat: oracle.OUT_FORMAT_OBJECT },
+        );
+        assert.deepEqual(facts.rows, [
+          { READ_ONLY: item.readOnly ? 'Y' : 'N', CONSTRAINT_TYPE: item.type },
+        ]);
+        const update = () =>
+          connection.execute(`UPDATE ${owner}.${item.name} SET ID=-1`);
+        if (item.type === 'O') await assert.rejects(update(), /ORA-42399/);
+        else if (item.type === 'V') await assert.rejects(update(), /ORA-01402/);
+        else assert.equal((await update()).rowsAffected, 1);
+        await connection.rollback();
+      }
+    } finally {
+      try {
+        for (const name of created)
+          await connection.execute(`DROP VIEW ${owner}.${name}`);
+        if (tableCreated)
+          await connection.execute(`DROP TABLE ${owner}.${table} PURGE`);
+      } finally {
+        await connection.close();
+      }
+    }
   },
 );

@@ -197,6 +197,7 @@ export const viewSchema = z
     reference: objectReferenceSchema,
     role: z.enum(['target', 'dependency']),
     columns: z.array(identifierSchema).min(1),
+    // Full catalog TEXT including restrictions. Flags below never add SQL.
     query: z.string().min(1),
     readOnly: z.boolean(),
     checkOption: z.enum(['NONE', 'LOCAL', 'CASCADED']),
@@ -223,7 +224,12 @@ export const prerequisiteSchema = z
   .strict();
 export type Prerequisite = z.infer<typeof prerequisiteSchema>;
 const commonDocumentProperties = {
-  formatVersion: z.literal(3),
+  formatVersion: z.literal(4, {
+    errorMap: () => ({
+      message:
+        'Expected format v4; re-extract older artifacts with this version of the pipeline.',
+    }),
+  }),
   dialect: z.literal('oracle'),
   sourceVersion: z.string(),
   extractedAt: z.string().datetime(),

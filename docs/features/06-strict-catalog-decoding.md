@@ -1,95 +1,82 @@
 # Feature: Strict catalog decoding and faithful view metadata
 
-- Status: Draft request — captured from architecture review; not approved for implementation
+- Status: Implemented
 - Date: 2026-09-24
 - Priority: High
 - Request: Preserve catalog facts faithfully and reject ambiguous or unknown metadata.
 
-## Context and Scope
+## Scope and approved decisions
 
-Given catalog rows with unexpected flags, duplicate identities, or incomplete
-members, extraction fails explicitly instead of coercing them into plausible facts.
-For a view created WITH READ ONLY, its structured metadata accurately records the
-restriction and replay emits it once.
+Catalog rows are decoded at runtime before domain assembly. Unexpected or null
+flags, malformed fields, duplicate identities/expressions, missing comments and
+incomplete ordered members fail explicitly with object/field context.
 
-Affected stages: extract, model, dictionary, validate, generate. Exclude new view
-families and arbitrary SQL parsing.
+The requester approved format v4 and re-extraction of old artifacts on 2026-09-24.
+Complete Oracle view TEXT owns restriction SQL. Structured readOnly/checkOption
+fields report catalog facts; generation never adds a second restriction clause.
+Both source and target v3 documents fail with actionable re-extraction guidance.
+Selection version 2 and policy version 1 are unchanged.
 
-This request captures the user's authorized review recommendations. Design defaults
-below are proposals, not approved implementation decisions. Implementation has not
-started. Resolve material open questions before promoting this request to Planned.
+Affected stages: extract/model/generate, with existing validation and dictionary
+consumers receiving corrected facts. New view families and arbitrary SQL parsing
+remain excluded. See [ADR 0004](../adr/0004-strict-catalog-decoding.md), which
+supersedes ADR 0003's v3 compatibility statement.
 
-## Research Findings
+## Implementation
 
-Verified: `src/catalog.ts` normalizes multiple string flags using equality tests;
-unknown values can become false. Row interfaces do not validate runtime results,
-and view queries use `any`. The view query selects READ_ONLY but returns
-readOnly=false and checkOption=NONE. Query text may still preserve restrictions;
-the review did not establish universal replay loss.
+- `src/catalog-decoding.ts` separates result-set transport and decoding, with
+  `CATALOG_UNKNOWN_VALUE`, `CATALOG_CARDINALITY`, and
+  `CATALOG_INCOMPLETE_METADATA` errors. Result sets close on failure.
+- `src/catalog.ts` uses explicit runtime row schemas without view-row `any`.
+  Identity, column, constraint, index, expression, and dependency identities are
+  checked before Maps or assembly. Constraint/index/view members require contiguous
+  positions; internal table column IDs allow legitimate gaps but not duplicates.
+  Identity-column flags must agree with identity rows.
+- View READ_ONLY agrees with constraint O; constraint V reports CASCADED. Restriction
+  cardinality and state are checked. Retained SQL text is not parsed or stripped.
+- Source/target schemas and extraction use v4. Examples, README, and ADRs describe
+  compatibility and restriction ownership. Independent semantic validation and
+  dictionary rendering retain their existing code paths.
+- Version extraction now recognizes the Oracle AI Database product name rather
+  than silently returning `unknown`.
 
-Oracle documents READ_ONLY as Y/N metadata. Primary source, accessed 2026-09-24:
-[ALL_VIEWS](https://docs.oracle.com/en/database/oracle/oracle-database/26/refrn/ALL_VIEWS.html).
+## Research and supported coverage
 
-Repository paths refer to the implementation reviewed on 2026-09-24. The review
-passed `npm test` (32 tests) and `npm run typecheck`; live integration was inspected,
-not executed.
+A read-only live probe on Oracle AI Database Free 23.26.3.0.0 verified that stored
+view TEXT includes WITH READ ONLY and WITH CHECK OPTION; named restriction names
+were omitted from TEXT. O/V facts were independently present in DBA_CONSTRAINTS.
+Ordinary views and both restriction types are covered by live replay tests.
+Older source versions are not integration-certified by this change.
 
-## Decisions and Boundaries
+Oracle documents [READ_ONLY](https://docs.oracle.com/en/database/oracle/oracle-database/21/refrn/ALL_VIEWS.html)
+and [O/V types](https://docs.oracle.com/en/database/oracle/oracle-database/26/refrn/ALL_CONSTRAINTS.html).
+Sources accessed 2026-09-24. Documentation is not treated as proof of TEXT behavior
+on untested versions.
 
-Keep source access read-only and scope selection explicit. No fallback from ALL_*
-to DBA_*. Unknown or incomplete metadata must fail with object and field context.
-Contract compatibility for restrictions remains an explicit open decision below;
-do not silently change the meaning of existing v3 fields.
+## Validation
 
-Preserve read-only extraction, offline transform/validate/generate, trusted SQL
-fragment boundaries, independent generation validation, deterministic ordering,
-non-overwriting artifacts, and secret exclusion. Invariant exceptions: none proposed.
+- `npm test`: 87 passing tests, including unknown/null flags, duplicates, missing
+  metadata, ordered-member failures, paged decoding, cleanup on decode/fetch failure,
+  faithful view facts, exactly-once SQL, and v3 rejection.
+- `npm run typecheck` and `npm run build`: pass.
+- `npm run test:integration`: full 98-table/five-view round trip and independent
+  ordinary/read-only/check-option probes pass on the disposable Oracle services.
+  Probes compare workbook cells and independent catalog queries, and verify DML
+  acceptance for an ordinary view and rejection for restricted views.
 
-## Proposed Design
+## Acceptance criteria
 
-Separate query transport, runtime row decoders, and domain assembly. Use explicit
-allowed enum mappings, cardinality checks, identity uniqueness, and contiguous
-ordered-member checks. Remove view-row `any` usage. Proposed extraction codes:
-CATALOG_UNKNOWN_VALUE, CATALOG_CARDINALITY, CATALOG_INCOMPLETE_METADATA.
+- [x] Unknown catalog flags cannot silently become supported states.
+- [x] Ambiguous and incomplete metadata fails with stable object/field context.
+- [x] View restrictions survive extraction, presentation, and replay exactly once.
+- [x] Compatibility behavior is documented and regression-tested.
+- [x] Existing pipeline invariants and stated compatibility behavior remain covered.
+- [x] README and relevant architecture decisions describe the final behavior.
 
-Establish whether retained view text owns restriction syntax or whether a verified
-catalog representation can safely separate it. Populate readOnly from catalog
-facts; obtain check-option facts from verified metadata rather than parsing SQL.
-Generation must avoid double-emitting restrictions. Dictionary output must agree
-with catalog facts. A semantic contract change requires a version bump, explicit
-old-artifact handling, and coordinated updates to both source and target schemas.
+## Remaining limits
 
-## Implementation Plan
-
-1. Add catalog decoder failure fixtures in `test/catalog.test.ts`.
-2. Probe read-only/check-option catalog representation on supported Oracle versions.
-3. Resolve restriction ownership and compatibility before changing `src/model.ts`.
-4. Refactor `src/catalog.ts`, then align `src/validate.ts`, `src/generate.ts`, and
-   `src/dictionary.ts` with the resolved representation.
-5. Update README and the view ADR from the semantic-validation request.
-
-## Test Plan
-
-Test unexpected/null flags, duplicate identity/expression rows, incomplete ordered
-members, missing comments, and result-set cleanup on failure. Independently query
-Oracle restriction metadata for ordinary, read-only, and check-option views; verify
-replay semantics and workbook facts, not only exporter-to-exporter equality.
-
-Run `npm test` and `npm run typecheck`. Run `npm run build` for module/interface
-changes. Catalog or generated-SQL changes also require `npm run test:integration`
-against disposable Oracle services.
-
-## Acceptance Criteria
-
-- [ ] Unknown catalog flags cannot silently become supported states.
-- [ ] Ambiguous and incomplete metadata fails with stable object/field context.
-- [ ] View restrictions survive extraction, presentation, and replay exactly once.
-- [ ] Compatibility behavior is documented and regression-tested.
-- [ ] Existing pipeline invariants and stated compatibility behavior remain covered.
-- [ ] README and relevant architecture decisions describe the final behavior.
-
-## Risks and Open Questions
-
-Restriction ownership and artifact-version handling require research and approval
-before this request becomes implementation-ready. Supported source-version coverage
-must be stated explicitly; the cited reference alone does not prove older behavior.
+SQL fragments remain trusted and opaque: manually authored v4 documents must keep
+SQL and descriptive restriction fields consistent. The exporter does not reconstruct
+restriction names absent from TEXT. Extraction remains read-only with explicit
+ALL/DBA scope and no fallback; later stages remain offline, generation revalidates,
+output never overwrites, and errors exclude raw row/SQL contents.

@@ -571,3 +571,32 @@ test('CLI rejects an invalid target before creating SQL', async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('v4 view text owns restriction syntax and v3 requires re-extraction', () => {
+  const source = sourceFixture();
+  for (const restriction of ['READ ONLY', 'CHECK OPTION']) {
+    const view = ordinaryView('RESTRICTED');
+    view.query += ` WITH ${restriction}`;
+    view.readOnly = restriction === 'READ ONLY';
+    view.checkOption = restriction === 'CHECK OPTION' ? 'CASCADED' : 'NONE';
+    source.views = [view];
+    source.targetViews = [view.reference];
+    const target = transformSource(source);
+    assert.equal(
+      generateSql(target).split(`WITH ${restriction}`).length - 1,
+      1,
+    );
+    assert.throws(
+      () => sourceDocumentSchema.parse({ ...source, formatVersion: 3 }),
+      /re-extract/,
+    );
+    assert.throws(
+      () => targetDocumentSchema.parse({ ...target, formatVersion: 3 }),
+      /re-extract/,
+    );
+    assert.throws(
+      () => generateSql({ ...target, formatVersion: 3 }),
+      /re-extract/,
+    );
+  }
+});

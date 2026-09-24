@@ -34,3 +34,7 @@ reports use the same validation, and generation independently revalidates every
 input before rendering SQL. No automatic repair or dependency expansion occurs.
 Trusted SQL fragments remain opaque, not parsed or sandboxed. Extraction remains
 read-only and all subsequent stages remain offline. Output never overwrites files.
+
+ADR 0004 supersedes the v3 compatibility statement: format v4 makes complete view
+text own restriction syntax and requires re-extraction of older artifacts. The
+semantic validation and dependency rules in this decision continue to apply.

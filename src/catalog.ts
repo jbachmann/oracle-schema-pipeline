@@ -1,4 +1,4 @@
-import oracle, { type BindParameters, type Connection } from 'oracledb';
+import { type Connection } from 'oracledb';
 import type { SourceCatalog } from './extract.js';
 import {
   qualifiedName,
@@ -13,70 +13,100 @@ import {
   type ViewDefinition,
 } from './model.js';
 
-interface TableRow {
-  TABLESPACE_NAME: string | null;
-  COMPRESSION: string | null;
-  IOT_TYPE: string | null;
-  CLUSTER_NAME: string | null;
-  NESTED: string;
-  SECONDARY: string;
-  TEMPORARY: string;
-  PARTITIONED: string;
-  ORACLE_MAINTAINED: string;
-  SPECIAL_COUNT: number;
-}
-interface ColumnRow {
-  COLUMN_NAME: string;
-  COLUMN_ID: number | null;
-  INTERNAL_COLUMN_ID: number;
-  DATA_TYPE: string;
-  DATA_TYPE_OWNER: string | null;
-  DATA_LENGTH: number;
-  CHAR_LENGTH: number;
-  CHAR_USED: string | null;
-  DATA_PRECISION: number | null;
-  DATA_SCALE: number | null;
-  NULLABLE: string;
-  DATA_DEFAULT: string | null;
-  DEFAULT_ON_NULL: string;
-  VIRTUAL_COLUMN: string;
-  HIDDEN_COLUMN: string;
-  COLLATION: string | null;
-}
-interface CommentRow {
-  COMMENTS: string | null;
-}
-interface ColumnCommentRow extends CommentRow {
-  COLUMN_NAME: string;
-}
-interface ConstraintRow {
-  OWNER: string;
-  CONSTRAINT_NAME: string;
-  CONSTRAINT_TYPE: string;
-  GENERATED: string;
-  STATUS: string;
-  VALIDATED: string;
-  DEFERRABLE: string;
-  DEFERRED: string;
-  RELY: string | null;
-  SEARCH_CONDITION: string | null;
-  INDEX_OWNER: string | null;
-  INDEX_NAME: string | null;
-  R_OWNER: string | null;
-  R_CONSTRAINT_NAME: string | null;
-  DELETE_RULE: 'NO ACTION' | 'CASCADE' | 'SET NULL';
-  PARENT_TABLE_NAME: string | null;
-}
-interface IndexRow {
-  OWNER: string;
-  INDEX_NAME: string;
-  INDEX_TYPE: string;
-  UNIQUENESS: string;
-  VISIBILITY: string;
-  STATUS: string;
-  PARTITIONED: string;
-  COMPRESSION: string;
-}
+import { z } from 'zod';
+import {
+  catalogRows,
+  catalogFailure,
+  uniqueRows,
+  orderedRows,
+  singleRow,
+} from './catalog-decoding.js';
+
+const text = z.string().min(1);
+const nullableText = z.string().nullable();
+const yn = z.enum(['Y', 'N']);
+const yesNo = z.enum(['YES', 'NO']);
+const integer = z.number().int().nonnegative();
+const tableRow = z.object({
+  TABLESPACE_NAME: nullableText,
+  COMPRESSION: z.enum(['ENABLED', 'DISABLED']).nullable(),
+  IOT_TYPE: z.enum(['IOT', 'IOT_OVERFLOW', 'IOT_MAPPING']).nullable(),
+  CLUSTER_NAME: nullableText,
+  NESTED: yesNo,
+  SECONDARY: yn,
+  TEMPORARY: yn,
+  PARTITIONED: yesNo,
+  ORACLE_MAINTAINED: yn,
+  SPECIAL_COUNT: integer,
+});
+const columnRow = z.object({
+  COLUMN_NAME: text,
+  COLUMN_ID: integer.positive().nullable(),
+  INTERNAL_COLUMN_ID: integer.positive(),
+  DATA_TYPE: text,
+  DATA_TYPE_OWNER: nullableText,
+  DATA_LENGTH: integer,
+  CHAR_LENGTH: integer,
+  CHAR_USED: z.enum(['C', 'B']).nullable(),
+  DATA_PRECISION: z.number().int().nullable(),
+  DATA_SCALE: z.number().int().nullable(),
+  NULLABLE: yn,
+  DATA_DEFAULT: nullableText,
+  IDENTITY_COLUMN: yesNo,
+  DEFAULT_ON_NULL: yesNo,
+  VIRTUAL_COLUMN: yesNo,
+  HIDDEN_COLUMN: yesNo,
+  COLLATION: nullableText,
+});
+const commentRow = z.object({ COMMENTS: nullableText });
+const columnCommentRow = commentRow.extend({ COLUMN_NAME: text });
+const constraintRow = z.object({
+  OWNER: text,
+  CONSTRAINT_NAME: text,
+  CONSTRAINT_TYPE: z.enum(['C', 'P', 'U', 'R', 'V', 'O', 'H', 'F', 'S']),
+  GENERATED: z.enum(['USER NAME', 'GENERATED NAME']),
+  STATUS: z.enum(['ENABLED', 'DISABLED']),
+  VALIDATED: z.enum(['VALIDATED', 'NOT VALIDATED']),
+  DEFERRABLE: z.enum(['DEFERRABLE', 'NOT DEFERRABLE']),
+  DEFERRED: z.enum(['DEFERRED', 'IMMEDIATE']),
+  RELY: z.literal('RELY').nullable(),
+  SEARCH_CONDITION: nullableText,
+  INDEX_OWNER: nullableText,
+  INDEX_NAME: nullableText,
+  R_OWNER: nullableText,
+  R_CONSTRAINT_NAME: nullableText,
+  DELETE_RULE: z.enum(['NO ACTION', 'CASCADE', 'SET NULL']).nullable(),
+  PARENT_TABLE_NAME: nullableText,
+});
+type ConstraintRow = z.infer<typeof constraintRow>;
+const indexRow = z.object({
+  OWNER: text,
+  INDEX_NAME: text,
+  INDEX_TYPE: text,
+  UNIQUENESS: z.enum(['UNIQUE', 'NONUNIQUE']),
+  VISIBILITY: z.enum(['VISIBLE', 'INVISIBLE']),
+  STATUS: z.enum(['VALID', 'UNUSABLE', 'N/A']),
+  PARTITIONED: yesNo,
+  COMPRESSION: z.enum(['ENABLED', 'DISABLED', 'ADVANCED LOW', 'ADVANCED HIGH']),
+});
+const viewRow = z.object({
+  TEXT: text,
+  READ_ONLY: yn,
+  BEQUEATH: z.enum(['DEFINER', 'CURRENT_USER']),
+  EDITIONING_VIEW: yn,
+  CONTAINER_DATA: yn,
+  DEFAULT_COLLATION: nullableText,
+  TYPE_TEXT: nullableText,
+  SUPERVIEW_NAME: nullableText,
+  STATUS: z.enum(['VALID', 'INVALID']),
+  ORACLE_MAINTAINED: yn,
+});
+const dependencyRow = z.object({
+  REFERENCED_OWNER: nullableText,
+  REFERENCED_NAME: text,
+  REFERENCED_TYPE: text,
+  REFERENCED_LINK_NAME: nullableText,
+});
 
 export type CatalogScope = 'all' | 'dba';
 const catalogViews = {
@@ -102,29 +132,6 @@ const catalogViews = {
 } as const;
 type CatalogView = keyof typeof catalogViews;
 
-/** Dictionary reads are complete result-set reads, never limited by maxRows. */
-async function queryRows<Row>(
-  connection: Connection,
-  sql: string,
-  binds: BindParameters = {},
-): Promise<Row[]> {
-  const result = await connection.execute<Row>(sql, binds, {
-    outFormat: oracle.OUT_FORMAT_OBJECT,
-    resultSet: true,
-  });
-  const resultSet = result.resultSet!;
-  const rows: Row[] = [];
-  try {
-    while (true) {
-      const batch = await resultSet.getRows(100);
-      if (!batch.length) return rows;
-      rows.push(...batch);
-    }
-  } finally {
-    await resultSet.close();
-  }
-}
-
 export class OracleCatalog implements SourceCatalog {
   private readonly constraintCache = new Map<string, ConstraintRow[]>();
   private readonly constraintColumnCache = new Map<string, string[]>();
@@ -137,11 +144,12 @@ export class OracleCatalog implements SourceCatalog {
   }
 
   async databaseVersion(): Promise<string> {
-    const rows = await queryRows<{ VERSION: string }>(
+    const rows = await catalogRows(
       this.connection,
-      "SELECT version FROM product_component_version WHERE product LIKE 'Oracle Database%' ORDER BY product",
+      z.object({ VERSION: text }),
+      "SELECT version FROM product_component_version WHERE product LIKE 'Oracle%Database%' ORDER BY product",
     );
-    return rows[0]?.VERSION ?? 'unknown';
+    return singleRow(rows, 'database', 'VERSION').VERSION;
   }
 
   private async constraintRows(
@@ -151,8 +159,9 @@ export class OracleCatalog implements SourceCatalog {
     const cached = this.constraintCache.get(cacheKey);
     if (cached) return cached;
     // Read the LONG SEARCH_CONDITION itself. SEARCH_CONDITION_VC can truncate.
-    const rows = await queryRows<ConstraintRow>(
+    const rows = await catalogRows(
       this.connection,
+      constraintRow,
       `
       SELECT c.owner,c.constraint_name,c.constraint_type,c.generated,c.status,c.validated,
              c.deferrable,c.deferred,c.rely,c.search_condition,c.index_owner,c.index_name,
@@ -162,6 +171,7 @@ export class OracleCatalog implements SourceCatalog {
        WHERE c.owner=:owner AND c.table_name=:tableName ORDER BY c.constraint_name`,
       { owner: table.owner, tableName: table.name },
     );
+    uniqueRows(rows, ['OWNER', 'CONSTRAINT_NAME'], qualifiedName(table));
     this.constraintCache.set(cacheKey, rows);
     return rows;
   }
@@ -172,13 +182,16 @@ export class OracleCatalog implements SourceCatalog {
     const cacheKey = objectKey(reference);
     const cached = this.constraintColumnCache.get(cacheKey);
     if (cached) return cached;
-    const rows = await queryRows<{ COLUMN_NAME: string }>(
+    const rows = await catalogRows(
       this.connection,
+      z.object({ COLUMN_NAME: text, POSITION: integer.positive() }),
       `
-      SELECT column_name FROM ${this.catalogView('consColumns')}
+      SELECT column_name,position FROM ${this.catalogView('consColumns')}
        WHERE owner=:owner AND constraint_name=:constraintName ORDER BY position`,
       { owner: reference.owner, constraintName: reference.name },
     );
+    orderedRows(rows, 'POSITION', qualifiedName(reference));
+    uniqueRows(rows, ['COLUMN_NAME'], qualifiedName(reference));
     const columns = rows.map((row) => row.COLUMN_NAME);
     this.constraintColumnCache.set(cacheKey, columns);
     return columns;
@@ -200,8 +213,11 @@ export class OracleCatalog implements SourceCatalog {
 
   private async foreignKey(row: ConstraintRow): Promise<ForeignKeyDefinition> {
     if (!row.R_OWNER || !row.R_CONSTRAINT_NAME || !row.PARENT_TABLE_NAME) {
-      throw new Error(
-        `Cannot resolve parent metadata for ${row.OWNER}.${row.CONSTRAINT_NAME}.`,
+      catalogFailure(
+        'CATALOG_INCOMPLETE_METADATA',
+        `${row.OWNER}.${row.CONSTRAINT_NAME}`,
+        'R_CONSTRAINT_NAME',
+        'Cannot resolve parent metadata',
       );
     }
     const childColumns = await this.constraintColumns({
@@ -214,15 +230,24 @@ export class OracleCatalog implements SourceCatalog {
     };
     const parentColumns = await this.constraintColumns(parentConstraint);
     if (!childColumns.length || childColumns.length !== parentColumns.length)
-      throw new Error(
-        `Incomplete composite FK metadata: ${row.CONSTRAINT_NAME}.`,
+      catalogFailure(
+        'CATALOG_INCOMPLETE_METADATA',
+        `${row.OWNER}.${row.CONSTRAINT_NAME}`,
+        'columnPairs',
+        'Incomplete composite FK metadata',
       );
     return {
       ...this.constraintProperties(row),
       kind: 'foreign-key',
       parentConstraint,
       parentTable: { owner: row.R_OWNER, name: row.PARENT_TABLE_NAME },
-      onDelete: row.DELETE_RULE,
+      onDelete:
+        row.DELETE_RULE ??
+        catalogFailure(
+          'CATALOG_INCOMPLETE_METADATA',
+          `${row.OWNER}.${row.CONSTRAINT_NAME}`,
+          'DELETE_RULE',
+        ),
       columnPairs: childColumns.map((childColumn, position) => ({
         childColumn,
         parentColumn: parentColumns[position],
@@ -239,8 +264,9 @@ export class OracleCatalog implements SourceCatalog {
 
   async table(reference: ObjectReference): Promise<TableDefinition> {
     const binds = { owner: reference.owner, tableName: reference.name };
-    const rows = await queryRows<TableRow>(
+    const rows = await catalogRows(
       this.connection,
+      tableRow,
       `
       SELECT t.tablespace_name,t.compression,t.iot_type,t.cluster_name,t.nested,t.secondary,
              t.temporary,t.partitioned,u.oracle_maintained,
@@ -252,26 +278,16 @@ export class OracleCatalog implements SourceCatalog {
        WHERE t.owner=:owner AND t.table_name=:tableName`,
       binds,
     );
-    const table = rows[0];
-    if (!table)
-      throw new Error(
-        `Missing or inaccessible table: ${qualifiedName(reference)}.`,
-      );
-    if (rows.length !== 1)
-      throw new Error(
-        `Ambiguous table metadata for ${qualifiedName(reference)}.`,
-      );
-    const tableComments = await queryRows<CommentRow>(
+    const table = singleRow(rows, qualifiedName(reference), 'table');
+    const tableComments = await catalogRows(
       this.connection,
+      commentRow,
       `
       SELECT comments FROM ${this.catalogView('tabComments')}
        WHERE owner=:owner AND table_name=:tableName AND table_type='TABLE'`,
       binds,
     );
-    if (tableComments.length !== 1)
-      throw new Error(
-        `Expected exactly one table comment row for ${qualifiedName(reference)}; found ${tableComments.length}.`,
-      );
+    singleRow(tableComments, qualifiedName(reference), 'COMMENTS');
     const unsupportedFeatures: string[] = [];
     if (table.IOT_TYPE)
       unsupportedFeatures.push(`Index-organized table: ${table.IOT_TYPE}`);
@@ -289,31 +305,35 @@ export class OracleCatalog implements SourceCatalog {
         'External/object/materialized-view table or encrypted column',
       );
 
-    const identities = await queryRows<{
-      COLUMN_NAME: string;
-      GENERATION_TYPE: string;
-      IDENTITY_OPTIONS: string;
-    }>(
+    const identities = await catalogRows(
       this.connection,
+      z.object({
+        COLUMN_NAME: text,
+        GENERATION_TYPE: z.enum(['ALWAYS', 'BY DEFAULT', 'BY DEFAULT ON NULL']),
+        IDENTITY_OPTIONS: text,
+      }),
       `SELECT column_name,generation_type,identity_options FROM ${this.catalogView('tabIdentityCols')} WHERE owner=:owner AND table_name=:tableName`,
       binds,
     );
+    uniqueRows(identities, ['COLUMN_NAME'], qualifiedName(reference));
     const identityByColumn = new Map(
       identities.map((row) => [row.COLUMN_NAME, row]),
     );
     // USER_GENERATED retains invisible user columns but excludes internal columns
     // backing function-based indexes. Those indexes are modeled as expressions.
-    const columnRows = await queryRows<ColumnRow>(
+    const columnRows = await catalogRows(
       this.connection,
+      columnRow,
       `
       SELECT column_name,column_id,internal_column_id,data_type,data_type_owner,data_length,char_length,
-             char_used,data_precision,data_scale,nullable,data_default,default_on_null,virtual_column,hidden_column,collation
+             char_used,data_precision,data_scale,nullable,data_default,identity_column,default_on_null,virtual_column,hidden_column,collation
         FROM ${this.catalogView('tabCols')} WHERE owner=:owner AND table_name=:tableName AND user_generated='YES'
        ORDER BY column_id NULLS LAST, internal_column_id`,
       binds,
     );
-    const columnCommentRows = await queryRows<ColumnCommentRow>(
+    const columnCommentRows = await catalogRows(
       this.connection,
+      columnCommentRow,
       `
       SELECT cc.column_name,cc.comments
         FROM ${this.catalogView('colComments')} cc
@@ -321,31 +341,67 @@ export class OracleCatalog implements SourceCatalog {
        WHERE cc.owner=:owner AND cc.table_name=:tableName AND tc.user_generated='YES'`,
       binds,
     );
+    uniqueRows(columnRows, ['COLUMN_NAME'], qualifiedName(reference));
+    uniqueRows(columnRows, ['INTERNAL_COLUMN_ID'], qualifiedName(reference));
+    uniqueRows(
+      columnRows.filter((column) => column.COLUMN_ID !== null),
+      ['COLUMN_ID'],
+      qualifiedName(reference),
+    );
+    // Internal positions can have legitimate gaps after dropped/system columns.
+    for (const column of columnRows)
+      if (
+        (column.IDENTITY_COLUMN === 'YES') !==
+        identityByColumn.has(column.COLUMN_NAME)
+      )
+        catalogFailure(
+          'CATALOG_INCOMPLETE_METADATA',
+          qualifiedName(reference) + '.' + column.COLUMN_NAME,
+          'IDENTITY_COLUMN',
+        );
+    if (!columnRows.length)
+      catalogFailure(
+        'CATALOG_INCOMPLETE_METADATA',
+        qualifiedName(reference),
+        'columns',
+      );
     const commentByColumn = new Map<string, string | null>();
     for (const row of columnCommentRows) {
       if (commentByColumn.has(row.COLUMN_NAME))
-        throw new Error(
-          `Duplicate column comment row for ${qualifiedName(reference)}.${row.COLUMN_NAME}.`,
+        catalogFailure(
+          'CATALOG_CARDINALITY',
+          qualifiedName(reference) + '.' + row.COLUMN_NAME,
+          'COMMENTS',
+          'Duplicate column comment row',
         );
       commentByColumn.set(row.COLUMN_NAME, row.COMMENTS);
     }
     const modeledNames = new Set(columnRows.map((row) => row.COLUMN_NAME));
     for (const name of identityByColumn.keys())
       if (!modeledNames.has(name)) {
-        throw new Error(
-          `Missing or inaccessible identity column metadata for ${qualifiedName(reference)}.${name}.`,
+        catalogFailure(
+          'CATALOG_INCOMPLETE_METADATA',
+          qualifiedName(reference) + '.' + name,
+          'identity',
+          'Missing or inaccessible identity column metadata',
         );
       }
     for (const name of commentByColumn.keys())
       if (!modeledNames.has(name)) {
-        throw new Error(
-          `Unexpected column comment row for ${qualifiedName(reference)}.${name}.`,
+        catalogFailure(
+          'CATALOG_INCOMPLETE_METADATA',
+          qualifiedName(reference) + '.' + name,
+          'COMMENTS',
+          'Unexpected column comment row',
         );
       }
     for (const name of modeledNames)
       if (!commentByColumn.has(name)) {
-        throw new Error(
-          `Missing column comment row for ${qualifiedName(reference)}.${name}.`,
+        catalogFailure(
+          'CATALOG_INCOMPLETE_METADATA',
+          qualifiedName(reference) + '.' + name,
+          'COMMENTS',
+          'Missing column comment row',
         );
       }
     const columns: ColumnDefinition[] = columnRows.map((column, position) => {
@@ -358,7 +414,7 @@ export class OracleCatalog implements SourceCatalog {
           name: column.DATA_TYPE,
           owner: column.DATA_TYPE_OWNER,
           byteLength: column.DATA_LENGTH,
-          characterLength: column.CHAR_LENGTH ?? 0,
+          characterLength: column.CHAR_LENGTH,
           lengthSemantics:
             column.CHAR_USED === 'C'
               ? 'CHAR'
@@ -384,6 +440,12 @@ export class OracleCatalog implements SourceCatalog {
     });
     const constraints: ConstraintDefinition[] = [];
     for (const row of await this.constraintRows(reference)) {
+      if ((row.INDEX_OWNER === null) !== (row.INDEX_NAME === null))
+        catalogFailure(
+          'CATALOG_INCOMPLETE_METADATA',
+          `${row.OWNER}.${row.CONSTRAINT_NAME}`,
+          'INDEX_OWNER,INDEX_NAME',
+        );
       const properties = this.constraintProperties(row);
       if (row.CONSTRAINT_TYPE === 'R')
         constraints.push(await this.foreignKey(row));
@@ -393,8 +455,11 @@ export class OracleCatalog implements SourceCatalog {
           name: row.CONSTRAINT_NAME,
         });
         if (!constraintColumns.length)
-          throw new Error(
-            `Missing or inaccessible constraint columns: ${row.CONSTRAINT_NAME}.`,
+          catalogFailure(
+            'CATALOG_INCOMPLETE_METADATA',
+            `${row.OWNER}.${row.CONSTRAINT_NAME}`,
+            'columns',
+            'Missing or inaccessible constraint columns',
           );
         constraints.push({
           ...properties,
@@ -407,8 +472,11 @@ export class OracleCatalog implements SourceCatalog {
         });
       } else if (row.CONSTRAINT_TYPE === 'C') {
         if (!row.SEARCH_CONDITION)
-          throw new Error(
-            `Missing full check expression: ${row.CONSTRAINT_NAME}.`,
+          catalogFailure(
+            'CATALOG_INCOMPLETE_METADATA',
+            `${row.OWNER}.${row.CONSTRAINT_NAME}`,
+            'SEARCH_CONDITION',
+            'Missing full check expression',
           );
         // Oracle represents NOT NULL in the catalog as a check predicate. Only
         // recognize the exact canonical form; never parse arbitrary predicates.
@@ -452,53 +520,62 @@ export class OracleCatalog implements SourceCatalog {
   }
 
   private async indexes(table: ObjectReference): Promise<IndexDefinition[]> {
-    const indexRows = await queryRows<IndexRow>(
+    const indexRows = await catalogRows(
       this.connection,
+      indexRow,
       `
       SELECT owner,index_name,index_type,uniqueness,visibility,status,partitioned,compression
         FROM ${this.catalogView('indexes')} WHERE table_owner=:owner AND table_name=:tableName AND index_type<>'LOB'
        ORDER BY owner,index_name`,
       { owner: table.owner, tableName: table.name },
     );
+    uniqueRows(indexRows, ['OWNER', 'INDEX_NAME'], qualifiedName(table));
     const definitions: IndexDefinition[] = [];
     for (const index of indexRows) {
       const binds = { owner: index.OWNER, indexName: index.INDEX_NAME };
-      const expressions = await queryRows<{
-        COLUMN_POSITION: number;
-        COLUMN_EXPRESSION: string;
-      }>(
+      const expressions = await catalogRows(
         this.connection,
+        z.object({
+          COLUMN_POSITION: integer.positive(),
+          COLUMN_EXPRESSION: text,
+        }),
         `
         SELECT column_position,column_expression FROM ${this.catalogView('indExpressions')}
          WHERE index_owner=:owner AND index_name=:indexName ORDER BY column_position`,
         binds,
       );
+      uniqueRows(
+        expressions,
+        ['COLUMN_POSITION'],
+        `${index.OWNER}.${index.INDEX_NAME}`,
+      );
       const expressionByPosition = new Map(
         expressions.map((row) => [row.COLUMN_POSITION, row.COLUMN_EXPRESSION]),
       );
-      const keys = await queryRows<{
-        COLUMN_NAME: string;
-        COLUMN_POSITION: number;
-        DESCEND: 'ASC' | 'DESC';
-      }>(
+      const keys = await catalogRows(
         this.connection,
+        z.object({
+          COLUMN_NAME: text,
+          COLUMN_POSITION: integer.positive(),
+          DESCEND: z.enum(['ASC', 'DESC']),
+        }),
         `
         SELECT column_name,column_position,descend FROM ${this.catalogView('indColumns')}
          WHERE index_owner=:owner AND index_name=:indexName ORDER BY column_position`,
         binds,
       );
-      if (
-        !keys.length ||
-        keys.some((key, position) => key.COLUMN_POSITION !== position + 1)
-      ) {
-        throw new Error(
-          `Missing or inaccessible index keys: ${index.OWNER}.${index.INDEX_NAME}.`,
-        );
-      }
+      orderedRows(
+        keys,
+        'COLUMN_POSITION',
+        `${index.OWNER}.${index.INDEX_NAME}`,
+      );
       for (const position of expressionByPosition.keys())
         if (!keys.some((key) => key.COLUMN_POSITION === position)) {
-          throw new Error(
-            `Missing or inaccessible index expression key: ${index.OWNER}.${index.INDEX_NAME}.`,
+          catalogFailure(
+            'CATALOG_INCOMPLETE_METADATA',
+            `${index.OWNER}.${index.INDEX_NAME}`,
+            'COLUMN_EXPRESSION',
+            'Missing or inaccessible index expression key',
           );
         }
       definitions.push({
@@ -523,25 +600,46 @@ export class OracleCatalog implements SourceCatalog {
 
   async view(reference: ObjectReference): Promise<ViewDefinition> {
     const binds = { owner: reference.owner, viewName: reference.name };
-    const rows = await queryRows<any>(
+    const rows = await catalogRows(
       this.connection,
+      viewRow,
       `SELECT v.text,v.read_only,v.bequeath,v.editioning_view,v.container_data,v.default_collation,v.type_text,v.superview_name,o.status,u.oracle_maintained FROM ${this.catalogView('views')} v JOIN ${this.catalogView('objects')} o ON o.owner=v.owner AND o.object_name=v.view_name AND o.object_type='VIEW' JOIN ${this.catalogView('users')} u ON u.username=v.owner WHERE v.owner=:owner AND v.view_name=:viewName`,
       binds,
     );
-    const row = rows[0];
-    if (!row)
-      throw new Error(
-        'Missing or inaccessible view: ' + qualifiedName(reference),
-      );
-    if (rows.length !== 1)
-      throw new Error(
-        `Ambiguous view metadata for ${qualifiedName(reference)}.`,
-      );
-    const columns = await queryRows<{ COLUMN_NAME: string }>(
+    const row = singleRow(rows, qualifiedName(reference), 'view');
+    const columns = await catalogRows(
       this.connection,
-      `SELECT column_name FROM ${this.catalogView('tabColumns')} WHERE owner=:owner AND table_name=:viewName ORDER BY column_id`,
+      z.object({ COLUMN_NAME: text, POSITION: integer.positive() }),
+      `SELECT column_name,column_id AS position FROM ${this.catalogView('tabColumns')} WHERE owner=:owner AND table_name=:viewName ORDER BY column_id`,
       binds,
     );
+    orderedRows(columns, 'POSITION', qualifiedName(reference));
+    uniqueRows(columns, ['COLUMN_NAME'], qualifiedName(reference));
+    const restrictions = await catalogRows(
+      this.connection,
+      z.object({
+        CONSTRAINT_NAME: text,
+        CONSTRAINT_TYPE: z.enum(['V', 'O']),
+        STATUS: z.literal('ENABLED'),
+      }),
+      `SELECT constraint_name,constraint_type,status FROM ${this.catalogView('constraints')}
+      WHERE owner=:owner AND table_name=:viewName AND constraint_type IN ('V','O')`,
+      binds,
+    );
+    if (restrictions.length > 1)
+      catalogFailure(
+        'CATALOG_CARDINALITY',
+        qualifiedName(reference),
+        'restrictions',
+      );
+    const readOnly = row.READ_ONLY === 'Y';
+    if (readOnly !== (restrictions[0]?.CONSTRAINT_TYPE === 'O'))
+      catalogFailure(
+        'CATALOG_INCOMPLETE_METADATA',
+        qualifiedName(reference),
+        'READ_ONLY',
+        'Restriction metadata disagrees',
+      );
     const unsupportedFeatures: string[] = [];
     if (row.ORACLE_MAINTAINED !== 'N')
       unsupportedFeatures.push('Oracle-maintained schema');
@@ -556,9 +654,10 @@ export class OracleCatalog implements SourceCatalog {
       role: 'target',
       columns: columns.map((column) => column.COLUMN_NAME),
       query: row.TEXT,
-      readOnly: false,
-      checkOption: 'NONE',
-      bequeath: row.BEQUEATH ?? 'DEFINER',
+      readOnly,
+      checkOption:
+        restrictions[0]?.CONSTRAINT_TYPE === 'V' ? 'CASCADED' : 'NONE',
+      bequeath: row.BEQUEATH,
       status: row.STATUS,
       collation: row.DEFAULT_COLLATION,
       editioning: row.EDITIONING_VIEW === 'Y',
@@ -573,10 +672,21 @@ export class OracleCatalog implements SourceCatalog {
   async viewDependencies(
     reference: ObjectReference,
   ): Promise<ViewDefinition['dependencies']> {
-    const rows = await queryRows<any>(
+    const rows = await catalogRows(
       this.connection,
+      dependencyRow,
       `SELECT DISTINCT referenced_owner,referenced_name,referenced_type,referenced_link_name FROM ${this.catalogView('dependencies')} WHERE owner=:owner AND name=:viewName AND type='VIEW' ORDER BY referenced_owner,referenced_name,referenced_type`,
       { owner: reference.owner, viewName: reference.name },
+    );
+    uniqueRows(
+      rows,
+      [
+        'REFERENCED_OWNER',
+        'REFERENCED_NAME',
+        'REFERENCED_TYPE',
+        'REFERENCED_LINK_NAME',
+      ],
+      qualifiedName(reference),
     );
     return rows.map((row) => ({
       reference: {
@@ -589,13 +699,9 @@ export class OracleCatalog implements SourceCatalog {
   }
 
   async prerequisites(table: ObjectReference): Promise<Prerequisite[]> {
-    const rows = await queryRows<{
-      REFERENCED_OWNER: string | null;
-      REFERENCED_NAME: string;
-      REFERENCED_TYPE: string;
-      REFERENCED_LINK_NAME: string | null;
-    }>(
+    const rows = await catalogRows(
       this.connection,
+      dependencyRow,
       `
       SELECT DISTINCT d.referenced_owner,d.referenced_name,d.referenced_type,d.referenced_link_name
         FROM ${this.catalogView('dependencies')} d
@@ -610,6 +716,16 @@ export class OracleCatalog implements SourceCatalog {
              AND d.referenced_type='SEQUENCE')
        ORDER BY d.referenced_owner,d.referenced_name`,
       { owner: table.owner, tableName: table.name },
+    );
+    uniqueRows(
+      rows,
+      [
+        'REFERENCED_OWNER',
+        'REFERENCED_NAME',
+        'REFERENCED_TYPE',
+        'REFERENCED_LINK_NAME',
+      ],
+      qualifiedName(table),
     );
     return rows.map((row) => ({
       requiredBy: table,

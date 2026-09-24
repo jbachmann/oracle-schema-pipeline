@@ -100,7 +100,7 @@ export function sourceFixture(): SourceDocument {
     fk('FK_PARENT_GRANDPARENT', { owner: 'OTHER', name: 'GRANDPARENT' }),
   );
   return sourceDocumentSchema.parse({
-    formatVersion: 3,
+    formatVersion: 4,
     kind: 'source',
     dialect: 'oracle',
     sourceVersion: '19.0.0.0.0',

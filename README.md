@@ -175,7 +175,7 @@ cycles, cross-schema references and composite column order are retained.
 
 ## Intermediate model
 
-Both models have `formatVersion: 3`, a `kind` discriminator, source version/time,
+Both models have `formatVersion: 4`, a `kind` discriminator, source version/time,
 original table and view target lists, table and view definitions, prerequisites and diagnostics. The target
 adds `targetVersion: "23"` and the applied policy. The model is Oracle-aware, not a
 universal database abstraction.
@@ -462,7 +462,7 @@ References:
 
 ### Authoritative semantic validation
 
-Strict v3 artifacts are checked independently of extraction annotations. Invalid
+Strict v4 artifacts are checked independently of extraction annotations. Invalid
 models previously accepted may now be rejected: unrelated views/tables, table/view
 name collisions, duplicate view columns, specialized view flags (editioning,
 typed, superview, container-data), conflicting read-only/check-option settings,
@@ -476,3 +476,28 @@ view layers use ordinal object-key ordering shared with validation. Transform
 reports expose these diagnostics and generation independently revalidates input.
 No model repair or SQL-expression parsing is performed. See
 [ADR 0003](docs/adr/0003-authoritative-view-validation.md).
+
+### Strict catalog decoding and format v4
+
+Extraction validates driver rows before assembling objects. Unknown enum flags,
+malformed or missing values, duplicate identities and expressions, missing comment
+rows, and incomplete ordered constraint/index/view members fail with
+`CATALOG_UNKNOWN_VALUE`, `CATALOG_CARDINALITY`, or
+`CATALOG_INCOMPLETE_METADATA`. Errors identify the object and field without dumping
+SQL fragments. Result sets close on both decoding and fetch failure. Catalog scope
+remains explicit; `all` never falls back to `dba`.
+
+Format v4 preserves the full Oracle view `TEXT`, including its restriction syntax.
+`readOnly` records `ALL_VIEWS.READ_ONLY`, cross-checked against the `O` constraint;
+`checkOption` is `CASCADED` for a `V` constraint and `NONE` otherwise. These fields
+are descriptive facts used by validation and the dictionary, not instructions to
+append SQL. Generation emits the retained text once. SQL fragments remain trusted
+and opaque: editing a restriction requires keeping text and descriptive facts in
+agreement. The pipeline does not parse arbitrary SQL to verify that agreement.
+
+Both source and target v3 artifacts are rejected with a re-extraction message.
+Re-extract from Oracle and transform again; changing only `formatVersion` cannot
+recover facts omitted by the old exporter. Object-selection version 2 and policy
+version 1 are unchanged. Live restriction coverage is Oracle AI Database Free
+23.26.3.0.0; the stricter adapter is not yet integration-certified on older Oracle
+versions. See [ADR 0004](docs/adr/0004-strict-catalog-decoding.md).

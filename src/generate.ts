@@ -216,11 +216,7 @@ export function generateSql(input: unknown): string {
           view.bequeath === 'CURRENT_USER'
             ? ' BEQUEATH CURRENT_USER'
             : ' BEQUEATH DEFINER';
-      const restriction = view.readOnly
-        ? ' WITH READ ONLY'
-        : view.checkOption === 'NONE'
-          ? ''
-          : ' WITH CHECK OPTION';
+      // Format v4 query text owns restriction syntax; fields are catalog facts.
       statements.push(
         'CREATE VIEW ' +
           qualifiedName(view.reference) +
@@ -230,7 +226,6 @@ export function generateSql(input: unknown): string {
           bequeath +
           ' AS ' +
           view.query.trim() +
-          restriction +
           ';',
       );
     }
