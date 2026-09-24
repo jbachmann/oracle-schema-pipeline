@@ -215,7 +215,7 @@ export class OracleCatalog implements SourceCatalog {
     if (row.EDITIONING_VIEW === "Y") unsupportedFeatures.push("Editioning view");
     if (row.TYPE_TEXT || row.SUPERVIEW_NAME) unsupportedFeatures.push("Typed or superview");
     if (row.CONTAINER_DATA === "Y") unsupportedFeatures.push("Container-data view");
-    return { reference, role: "target", columns: columns.map(column => column.COLUMN_NAME), query: row.TEXT, readOnly: row.READ_ONLY === "Y", checkOption: "NONE", bequeath: row.BEQUEATH ?? "DEFINER", status: row.STATUS, collation: row.DEFAULT_COLLATION, editioning: row.EDITIONING_VIEW === "Y", typed: Boolean(row.TYPE_TEXT), superview: Boolean(row.SUPERVIEW_NAME), containerData: row.CONTAINER_DATA === "Y", dependencies: [], unsupportedFeatures };
+    return { reference, role: "target", columns: columns.map(column => column.COLUMN_NAME), query: row.TEXT, readOnly: false, checkOption: "NONE", bequeath: row.BEQUEATH ?? "DEFINER", status: row.STATUS, collation: row.DEFAULT_COLLATION, editioning: row.EDITIONING_VIEW === "Y", typed: Boolean(row.TYPE_TEXT), superview: Boolean(row.SUPERVIEW_NAME), containerData: row.CONTAINER_DATA === "Y", dependencies: [], unsupportedFeatures };
   }
 
   async viewDependencies(reference: ObjectReference): Promise<ViewDefinition["dependencies"]> {

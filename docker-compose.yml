@@ -20,7 +20,7 @@ services:
       - "${ORACLE_SOURCE_PORT:-1521}:1521"
       - "${ORACLE_SOURCE_EM_PORT:-5500}:5500"
     healthcheck:
-      test: ["CMD-SHELL", "printf \"set heading off feedback off pages 0\\nalter session set container=FREEPDB1;\\nselect case when (select count(*) from dba_tables where owner in ('IAM','CATALOG','COMMERCE','FINANCE'))=98 and (select count(*) from dba_sequences where sequence_owner='IAM' and sequence_name='SOURCE_SEED_COMPLETE')=1 then 'READY' else 'WAIT' end from dual;\\n\" | sqlplus -s / as sysdba | grep -q READY"]
+      test: ["CMD-SHELL", "printf \"set heading off feedback off pages 0\\nalter session set container=FREEPDB1;\\nselect case when (select count(*) from dba_tables where owner in ('IAM','CATALOG','COMMERCE','FINANCE'))=98 and (select count(*) from dba_views where owner in ('IAM','CATALOG','COMMERCE','FINANCE'))=5 and (select count(*) from dba_sequences where sequence_owner='IAM' and sequence_name='SOURCE_SEED_COMPLETE')=1 then 'READY' else 'WAIT' end from dual;\\n\" | sqlplus -s / as sysdba | grep -q READY"]
       interval: 15s
       timeout: 10s
       retries: 40

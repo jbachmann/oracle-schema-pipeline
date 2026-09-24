@@ -43,12 +43,14 @@ files are never overwritten.
 
 ## Extract a real database
 
-Create `tables.json` using exact catalog spelling, normally uppercase:
+Create `objects.json` using exact catalog spelling, normally uppercase:
 
 ```json
-[
-  { "owner": "APP", "name": "CHILD" }
-]
+{
+  "version": 2,
+  "tables": [{ "owner": "APP", "name": "CHILD" }],
+  "views": [{ "owner": "REPORTING", "name": "OPEN_ORDERS" }]
+}
 ```
 
 An object reference has separate `owner` and `name` properties so quoted identifiers

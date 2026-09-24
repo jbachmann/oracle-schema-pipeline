@@ -10,6 +10,7 @@ import { targetDocumentSchema, type TargetDocument } from '../../src/model.js';
 
 const exec = promisify(execFile);
 const schemas = ['IAM', 'CATALOG', 'COMMERCE', 'FINANCE'];
+const selectedViews = [{ owner: 'FINANCE', name: 'OPEN_ORDER_FINANCE' }, { owner: 'CATALOG', name: 'Product Availability' }];
 const password = process.env.ORACLE_PWD ?? 'OracleDev123';
 
 async function command(file: string, args: string[], options: { env?: NodeJS.ProcessEnv; input?: string } = {}) {
@@ -97,6 +98,12 @@ function comparable(document: TargetDocument): unknown {
     `${left.reference.owner}.${left.reference.name}`.localeCompare(`${right.reference.owner}.${right.reference.name}`));
 }
 
+function comparableViews(document: TargetDocument): unknown {
+  return document.views.map(view => ({ ...view, query: normalizeExpression(view.query),
+    dependencies: [...view.dependencies].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+  })).sort((left, right) => JSON.stringify(left.reference).localeCompare(JSON.stringify(right.reference)));
+}
+
 test('generated SQL reconstructs the seeded source structure', { timeout: 15 * 60_000 }, async () => {
   if (process.env.ORACLE_INTEGRATION_USE_EXISTING !== '1') await compose('up', '-d', '--wait');
 
@@ -112,12 +119,16 @@ test('generated SQL reconstructs the seeded source structure', { timeout: 15 * 6
 
   const tables = await selectedTables(sourceDsn);
   assert.equal(tables.length, 98, 'source fixture must contain exactly 98 application tables');
-  await writeFile(tableFile, `${JSON.stringify({ version: 2, tables, views: [] }, null, 2)}\n`);
+  await writeFile(tableFile, `${JSON.stringify({ version: 2, tables, views: selectedViews }, null, 2)}\n`);
 
   await pipeline(['extract', '--dsn', sourceDsn, '--user', 'SYSTEM', '--objects', tableFile, '--output', sourceFile], directory);
   await pipeline(['transform', '--input', sourceFile, '--output', targetFile], directory);
   await pipeline(['validate', '--input', targetFile], directory);
   await pipeline(['generate', '--input', targetFile, '--output', sqlFile], directory);
+  const generatedSql = await readFile(sqlFile, 'utf8');
+  assert.ok(generatedSql.lastIndexOf('FOREIGN KEY') < generatedSql.indexOf('CREATE VIEW'));
+  assert.ok(generatedSql.indexOf('CREATE VIEW "COMMERCE"."OPEN_ORDERS"') < generatedSql.indexOf('CREATE VIEW "COMMERCE"."ORDER_PRODUCT_ROLLUP"'));
+  assert.ok(generatedSql.indexOf('GRANT SELECT ON "COMMERCE"."OPEN_ORDERS" TO "FINANCE";') < generatedSql.indexOf('CREATE VIEW "FINANCE"."OPEN_ORDER_FINANCE"'));
 
   await runSqlplus('oracle-destination', `ALTER SESSION SET CONTAINER=FREEPDB1;\nBEGIN\n${schemas.map(schema =>
     `  BEGIN EXECUTE IMMEDIATE 'DROP USER ${schema} CASCADE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -1918 THEN RAISE; END IF; END;`).join('\n')}\nEND;\n/`);
@@ -129,12 +140,19 @@ test('generated SQL reconstructs the seeded source structure', { timeout: 15 * 6
   const expected = targetDocumentSchema.parse(JSON.parse(await readFile(targetFile, 'utf8')));
   const actual = targetDocumentSchema.parse(JSON.parse(await readFile(replayTargetFile, 'utf8')));
   assert.deepEqual(comparable(actual), comparable(expected));
+  assert.deepEqual(comparableViews(actual), comparableViews(expected));
+  assert.equal(expected.views.length, 5);
 
   const verification = await runSqlplus('oracle-destination', `ALTER SESSION SET CONTAINER=FREEPDB1;
 SET HEADING OFF FEEDBACK OFF PAGES 0
 SELECT (SELECT COUNT(*) FROM dba_tables WHERE owner IN ('IAM','CATALOG','COMMERCE','FINANCE')) || ':' ||
        (SELECT COUNT(*) FROM dba_constraints WHERE owner IN ('IAM','CATALOG','COMMERCE','FINANCE') AND constraint_type='R') || ':' ||
+       (SELECT COUNT(*) FROM dba_views WHERE owner IN ('IAM','CATALOG','COMMERCE','FINANCE')) || ':' ||
        (SELECT COUNT(*) FROM dba_objects WHERE owner IN ('IAM','CATALOG','COMMERCE','FINANCE') AND status<>'VALID')
 FROM dual;`);
-  assert.match(verification.replace(/\s/gu, ''), /98:\d+:0/);
+  assert.match(verification.replace(/\s/gu, ''), /98:\d+:5:0/);
+  const queryResult = await runSqlplus('oracle-destination', `ALTER SESSION SET CONTAINER=FREEPDB1;
+SET HEADING OFF FEEDBACK OFF PAGES 0
+SELECT COUNT(*) FROM FINANCE.open_order_finance;`);
+  assert.match(queryResult.replace(/\s/gu, ''), /0/);
 });

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import oracle from 'oracledb';
 
 const schemas = ['IAM', 'CATALOG', 'COMMERCE', 'FINANCE'];
+const selectedViews = [{ owner: 'FINANCE', name: 'OPEN_ORDER_FINANCE' }, { owner: 'CATALOG', name: 'Product Availability' }];
 const password = process.env.ORACLE_PWD ?? 'OracleDev123';
 
 async function command(file: string, args: string[], options: { env?: NodeJS.ProcessEnv; input?: string } = {}) {
@@ -77,15 +78,15 @@ async function main(): Promise<void> {
   const timestamp = new Date().toISOString().replaceAll(/[:.]/gu, '-');
   const directory = join('artifacts', `db-clone-${timestamp}`);
   await mkdir(directory, { recursive: true });
-  const tableFile = join(directory, 'tables.json');
+  const objectFile = join(directory, 'objects.json');
   const sourceFile = join(directory, 'source.json');
   const targetFile = join(directory, 'target.json');
   const reportFile = join(directory, 'report.json');
   const sqlFile = join(directory, 'clone.sql');
-  await writeFile(tableFile, `${JSON.stringify(tables, null, 2)}\n`);
+  await writeFile(objectFile, JSON.stringify({ version: 2, tables, views: selectedViews }, null, 2) + '\n');
 
   console.log(`Writing pipeline artifacts to ${directory}`);
-  await pipeline(['extract', '--dsn', sourceDsn, '--user', 'SYSTEM', '--tables', tableFile, '--output', sourceFile]);
+  await pipeline(['extract', '--dsn', sourceDsn, '--user', 'SYSTEM', '--objects', objectFile, '--output', sourceFile]);
   await pipeline(['transform', '--input', sourceFile, '--output', targetFile, '--report', reportFile]);
   await pipeline(['validate', '--input', targetFile]);
   await pipeline(['generate', '--input', targetFile, '--output', sqlFile]);

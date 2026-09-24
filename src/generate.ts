@@ -93,7 +93,7 @@ export function generateSql(input: unknown): string {
     for (const view of ordered) {
       for (const edge of view.dependencies) if (!edge.databaseLink && edge.reference.owner !== view.reference.owner) { const grant = "GRANT SELECT ON " + qualifiedName(edge.reference) + " TO " + quoteIdentifier(view.reference.owner) + ";"; if (!grants.has(grant)) { statements.push(grant); grants.add(grant); } }
       const columns = view.columns.map(quoteIdentifier).join(", "), bequeath = view.bequeath === "CURRENT_USER" ? " BEQUEATH CURRENT_USER" : " BEQUEATH DEFINER";
-      const restriction = view.readOnly ? " WITH READ ONLY" : view.checkOption === "NONE" ? "" : " WITH " + view.checkOption + " CHECK OPTION";
+      const restriction = view.readOnly ? " WITH READ ONLY" : view.checkOption === "NONE" ? "" : " WITH CHECK OPTION";
       statements.push("CREATE VIEW " + qualifiedName(view.reference) + " (" + columns + ")" + bequeath + " AS " + view.query.trim() + restriction + ";");
     }
   }
