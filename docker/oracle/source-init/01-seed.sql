@@ -170,6 +170,119 @@ ALTER TABLE FINANCE.refund_transactions ADD CONSTRAINT fin_refund_return_fk FORE
 ALTER TABLE FINANCE.finance_audit ADD CONSTRAINT fin_audit_org_fk FOREIGN KEY(organization_id) REFERENCES IAM.organizations(organization_id);
 ALTER TABLE FINANCE.finance_audit ADD CONSTRAINT fin_audit_actor_fk FOREIGN KEY(actor_principal_id) REFERENCES IAM.principals(principal_id);
 
+-- Document every seeded table and column. Keeping this data-driven ensures new
+-- seed columns cannot silently be left undocumented.
+DECLARE
+  FUNCTION words(identifier VARCHAR2) RETURN VARCHAR2 IS
+  BEGIN
+    RETURN REPLACE(LOWER(identifier), '_', ' ');
+  END;
+
+  FUNCTION quoted_literal(value VARCHAR2) RETURN VARCHAR2 IS
+  BEGIN
+    RETURN '''' || REPLACE(value, '''', '''''') || '''';
+  END;
+
+  FUNCTION schema_purpose(owner_name VARCHAR2) RETURN VARCHAR2 IS
+  BEGIN
+    RETURN CASE owner_name
+      WHEN 'IAM' THEN 'identity and access management'
+      WHEN 'CATALOG' THEN 'product catalog and inventory management'
+      WHEN 'COMMERCE' THEN 'ordering and fulfillment'
+      WHEN 'FINANCE' THEN 'accounting and payment processing'
+    END;
+  END;
+
+  FUNCTION table_description(owner_name VARCHAR2, table_name VARCHAR2) RETURN VARCHAR2 IS
+  BEGIN
+    RETURN 'Stores ' || words(table_name) || ' used for the seeded ' ||
+      schema_purpose(owner_name) || ' example.';
+  END;
+
+  FUNCTION column_description(table_name VARCHAR2, column_name VARCHAR2) RETURN VARCHAR2 IS
+    label VARCHAR2(200) := words(column_name);
+  BEGIN
+    RETURN CASE
+      WHEN column_name IN ('BEFORE_STATE', 'AFTER_STATE', 'CHANGE_DOCUMENT', 'PAYLOAD',
+                           'POLICY_DOCUMENT', 'PROFILE_JSON', 'RULE_DOCUMENT') OR
+           (table_name = 'FINANCE_AUDIT' AND column_name = 'DETAILS')
+        THEN 'JSON document containing the ' || label || '.'
+      WHEN column_name LIKE '%\_ID' ESCAPE '\'
+        THEN 'Identifier for the ' || REPLACE(label, ' id', '') || ' associated with this record.'
+      WHEN column_name LIKE '%\_AT' ESCAPE '\'
+        THEN 'Date and time when the ' || REPLACE(label, ' at', '') || ' event occurred.'
+      WHEN column_name LIKE '%\_ON' ESCAPE '\'
+        THEN 'Calendar date for the ' || REPLACE(label, ' on', '') || ' event.'
+      WHEN column_name LIKE '%\_CODE' ESCAPE '\'
+        THEN 'Business code identifying the ' || REPLACE(label, ' code', '') || '.'
+      WHEN column_name LIKE '%\_NAME' ESCAPE '\'
+        THEN 'Human-readable name of the ' || REPLACE(label, ' name', '') || '.'
+      WHEN column_name LIKE '%\_NUMBER' ESCAPE '\'
+        THEN 'Business-facing number identifying the ' || REPLACE(label, ' number', '') || '.'
+      WHEN column_name LIKE '%\_REFERENCE' ESCAPE '\' OR column_name = 'EXTERNAL_ID'
+        THEN 'External or business reference used to correlate this ' || words(table_name) || ' record.'
+      WHEN column_name LIKE '%\_AMOUNT' ESCAPE '\' OR column_name IN
+           ('SUBTOTAL', 'TAX_TOTAL', 'GRAND_TOTAL', 'UNIT_COST', 'UNIT_PRICE', 'LINE_TOTAL')
+        THEN 'Monetary value represented by ' || label || ', in the record currency.'
+      WHEN column_name LIKE '%QUANTITY%' OR column_name LIKE '%\_QTY' ESCAPE '\' OR
+           column_name IN ('ON_HAND', 'RESERVED', 'AVAILABLE')
+        THEN 'Quantity represented by ' || label || ' in the applicable unit of measure.'
+      WHEN column_name IN ('ACTIVE', 'ENABLED', 'IS_DEFAULT', 'IS_PRIMARY', 'LOT_CONTROLLED',
+                           'RECONCILED', 'SERIAL_CONTROLLED', 'SUCCEEDED')
+        THEN 'Boolean flag indicating whether ' || label || ' is true.'
+      WHEN column_name IN ('STATUS', 'TASK_STATUS', 'LIFECYCLE_STATUS')
+        THEN 'Current lifecycle status of this ' || words(table_name) || ' record.'
+      WHEN column_name IN ('DESCRIPTION', 'DETAILS', 'MEMO', 'NOTE', 'NOTE_TEXT', 'PURPOSE',
+                           'REASON', 'REVIEW_TEXT')
+        THEN 'Descriptive text providing ' || label || ' for this record.'
+      WHEN column_name IN ('CURRENCY_CODE', 'COUNTRY_CODE', 'LOCALE_CODE', 'UOM_CODE')
+        THEN 'Standard code specifying the ' || REPLACE(label, ' code', '') || '.'
+      WHEN column_name = 'LINE_NO'
+        THEN 'Sequence number uniquely locating this line within its parent record.'
+      WHEN column_name IN ('VALID_FROM', 'STARTS_AT', 'STARTS_ON', 'ISSUED_AT')
+        THEN 'Date or timestamp when this record becomes effective.'
+      WHEN column_name IN ('VALID_TO', 'VALID_UNTIL', 'ENDS_AT', 'ENDS_ON', 'EXPIRES_AT', 'EXPIRES_ON')
+        THEN 'Date or timestamp after which this record is no longer effective.'
+      WHEN column_name LIKE '%\_TYPE' ESCAPE '\' OR column_name IN ('ACTION_NAME', 'CHANNEL',
+           'DISPOSITION', 'EFFECT', 'OPERATION', 'VISIBILITY')
+        THEN 'Classification value describing the ' || label || '.'
+      WHEN column_name LIKE '%\_URL%' ESCAPE '\'
+        THEN 'URL used for ' || label || '.'
+      WHEN column_name LIKE '%\_HASH' ESCAPE '\' OR column_name IN
+           ('ACCOUNT_FINGERPRINT', 'PUBLIC_KEY', 'SECRET_HASH', 'TOKEN_REFERENCE')
+        THEN 'Non-plaintext security value used for ' || label || '.'
+      ELSE 'Value of ' || label || ' for this ' || words(table_name) || ' record.'
+    END;
+  END;
+BEGIN
+  FOR table_record IN (
+    SELECT owner, table_name
+      FROM all_tables
+     WHERE owner IN ('IAM', 'CATALOG', 'COMMERCE', 'FINANCE')
+     ORDER BY owner, table_name
+  ) LOOP
+    EXECUTE IMMEDIATE
+      'COMMENT ON TABLE ' || DBMS_ASSERT.ENQUOTE_NAME(table_record.owner) || '.' ||
+      DBMS_ASSERT.ENQUOTE_NAME(table_record.table_name) || ' IS ' ||
+      quoted_literal(table_description(table_record.owner, table_record.table_name));
+
+    FOR column_record IN (
+      SELECT column_name
+        FROM all_tab_columns
+       WHERE owner = table_record.owner
+         AND table_name = table_record.table_name
+       ORDER BY column_id
+    ) LOOP
+      EXECUTE IMMEDIATE
+        'COMMENT ON COLUMN ' || DBMS_ASSERT.ENQUOTE_NAME(table_record.owner) || '.' ||
+        DBMS_ASSERT.ENQUOTE_NAME(table_record.table_name) || '.' ||
+        DBMS_ASSERT.ENQUOTE_NAME(column_record.column_name) || ' IS ' ||
+        quoted_literal(column_description(table_record.table_name, column_record.column_name));
+    END LOOP;
+  END LOOP;
+END;
+/
+
 -- Conventional views: chains, a diamond, joins, aliases, quoted names, cross-schema edges, and restrictions.
 ALTER SESSION SET CURRENT_SCHEMA = CATALOG;
 CREATE VIEW active_products (product_id, sku, product_name, lifecycle_status) AS
