@@ -1,6 +1,6 @@
 # Feature: Authoritative semantic validation
 
-- Status: Draft request — captured from architecture review; not approved for implementation
+- Status: Implemented and verified
 - Date: 2026-09-24
 - Priority: High
 - Request: Reject inconsistent or out-of-scope models before generating SQL.
@@ -14,9 +14,8 @@ validation reports blocking diagnostics and generation writes no SQL.
 Affected stages: transform reports, validate, generate. Include shared dependency
 analysis and deterministic ordering; exclude new supported Oracle object types.
 
-This request captures the user's authorized review recommendations. Design defaults
-below are proposals, not approved implementation decisions. Implementation has not
-started. Resolve material open questions before promoting this request to Planned.
+Implementation was authorized by the user's goal request. The final decisions are
+recorded in ADR 0003; the strict v3 document contract remains unchanged.
 
 ## Research Findings
 
@@ -45,7 +44,7 @@ Preserve read-only extraction, offline transform/validate/generate, trusted SQL
 fragment boundaries, independent generation validation, deterministic ordering,
 non-overwriting artifacts, and secret exclusion. Invariant exceptions: none proposed.
 
-## Proposed Design
+## Implemented Design
 
 Add an internal semantic analysis module returning object indexes, root-reachable
 closure, ordered views, and diagnostics. Traverse view edges only from requested
@@ -53,7 +52,7 @@ view roots; preserve the existing one-hop FK rule and role precedence. Check sha
 table/view identities, duplicate columns, specialized flags, explicit unsupported
 collation, and datatype bounds independently of extraction annotations.
 
-Proposed diagnostic codes: EXTRA_VIEW, OBJECT_NAME_COLLISION,
+Diagnostic codes: EXTRA_VIEW, OBJECT_NAME_COLLISION,
 DUPLICATE_VIEW_COLUMN, UNSUPPORTED_VIEW, UNSUPPORTED_COLLATION, UNSUPPORTED_TYPE.
 Reuse existing codes where their meaning already matches. Preserve missing-edge
 and cycle diagnostics. Use ordinal object-key ordering and adjacency/indegree
@@ -80,15 +79,29 @@ against disposable Oracle services.
 
 ## Acceptance Criteria
 
-- [ ] Each confirmed invalid model yields an object-specific blocking diagnostic.
-- [ ] Unreachable views cannot introduce additional accepted tables.
-- [ ] Supported fixtures preserve semantics and independent generation validation.
-- [ ] Validation and generation use one deterministic dependency analysis.
-- [ ] Existing pipeline invariants and stated compatibility behavior remain covered.
-- [ ] README and relevant architecture decisions describe the final behavior.
+- [x] Each confirmed invalid model yields an object-specific blocking diagnostic.
+- [x] Unreachable views cannot introduce additional accepted tables.
+- [x] Supported fixtures preserve semantics and independent generation validation.
+- [x] Validation and generation use one deterministic dependency analysis.
+- [x] Existing pipeline invariants and stated compatibility behavior remain covered.
+- [x] README and relevant architecture decisions describe the final behavior.
 
 ## Risks and Open Questions
 
-No product-scope decision is required for the confirmed gaps. Confirm the complete
-specialized-view rejection matrix during implementation. Avoid treating arbitrary
-trusted SQL expressions as a parseable or sandboxed language.
+The specialized-view rejection matrix covers editioning, typed, superview and
+container-data flags independently of annotations, plus conflicting read-only and
+check-option settings. Trusted SQL expressions remain opaque. No new object types
+or automatic artifact repair were introduced.
+
+## Implementation Verification
+
+- `npm test`: passed, 39 tests, including rejection before CLI SQL-file creation.
+- `npm run typecheck`: passed.
+- `npm run build`: passed.
+- `git diff --check`: passed.
+- `npm run test:integration`: passed against the disposable Oracle source and
+  destination services, including SQL replay and semantic comparison after
+  re-extraction. The test also verifies SQL stability after shuffling extracted
+  views and dependency edges. Initial environment failures were resolved by
+  reclaiming unused Docker build cache and recreating the incomplete test volumes
+  created during the disk-full attempt.

@@ -113,3 +113,25 @@ export function sourceFixture(): SourceDocument {
     diagnostics: [],
   });
 }
+
+export function ordinaryView(
+  name: string,
+): import('../src/model.js').ViewDefinition {
+  return {
+    reference: { owner: 'REPORTING', name },
+    role: 'target',
+    columns: ['ID'],
+    query: 'SELECT 1 FROM DUAL',
+    readOnly: false,
+    checkOption: 'NONE',
+    bequeath: 'DEFINER',
+    status: 'VALID',
+    collation: null,
+    editioning: false,
+    typed: false,
+    superview: false,
+    containerData: false,
+    dependencies: [],
+    unsupportedFeatures: [],
+  };
+}

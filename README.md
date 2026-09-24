@@ -459,3 +459,20 @@ References:
 - https://docs.oracle.com/en/database/oracle/oracle-database/19/refrn/ALL_CONSTRAINTS.html
 - https://docs.oracle.com/en/database/oracle/oracle-database/19/refrn/ALL_IND_EXPRESSIONS.html
 - https://docs.oracle.com/en/database/oracle/oracle-database/19/refrn/ALL_TAB_IDENTITY_COLS.html
+
+### Authoritative semantic validation
+
+Strict v3 artifacts are checked independently of extraction annotations. Invalid
+models previously accepted may now be rejected: unrelated views/tables, table/view
+name collisions, duplicate view columns, specialized view flags (editioning,
+typed, superview, container-data), conflicting read-only/check-option settings,
+unsupported explicit collation, and invalid or inconsistent timestamp precision.
+TIMESTAMP fractional precision supports 0 through 9.
+
+Only requested view roots expand local TABLE/VIEW dependencies recursively. Only
+requested tables expand one-hop FK parents. Table roles take precedence as target,
+direct-parent, then view-dependency. Missing dependencies and cycles block SQL;
+view layers use ordinal object-key ordering shared with validation. Transform
+reports expose these diagnostics and generation independently revalidates input.
+No model repair or SQL-expression parsing is performed. See
+[ADR 0003](docs/adr/0003-authoritative-view-validation.md).

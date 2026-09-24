@@ -1,3 +1,4 @@
+import { generateSql } from '../../src/generate.js';
 import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -237,6 +238,13 @@ test(
       directory,
     );
     await pipeline(['validate', '--input', targetFile], directory);
+    const orderedTarget = targetDocumentSchema.parse(
+      JSON.parse(await readFile(targetFile, 'utf8')),
+    );
+    const shuffledTarget = structuredClone(orderedTarget);
+    shuffledTarget.views.reverse();
+    for (const view of shuffledTarget.views) view.dependencies.reverse();
+    assert.equal(generateSql(shuffledTarget), generateSql(orderedTarget));
     await pipeline(
       ['generate', '--input', targetFile, '--output', sqlFile],
       directory,

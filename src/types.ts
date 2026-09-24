@@ -68,8 +68,21 @@ export function renderDataType(
   }
   const timestamp =
     /^TIMESTAMP(?:\(([0-9])\))?( WITH(?: LOCAL)? TIME ZONE)?$/.exec(name);
-  if (timestamp)
+  if (timestamp) {
+    const precision = Number(timestamp[1] ?? type.scale ?? 6);
+    if (
+      precision < 0 ||
+      precision > 9 ||
+      (type.scale !== null && (type.scale < 0 || type.scale > 9)) ||
+      (timestamp[1] !== undefined &&
+        type.scale !== null &&
+        precision !== type.scale)
+    )
+      throw new Error(
+        'TIMESTAMP fractional precision must be 0..9 and agree with scale.',
+      );
     return `TIMESTAMP(${timestamp[1] ?? type.scale ?? 6})${timestamp[2] ?? ''}`;
+  }
   // These names include their leading/fractional precision in Oracle's dictionary.
   if (
     /^INTERVAL YEAR\([0-9]\) TO MONTH$/.test(name) ||

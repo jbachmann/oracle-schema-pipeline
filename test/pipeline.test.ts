@@ -6,6 +6,7 @@ import { generateSql } from '../src/generate.js';
 import { validateTarget } from '../src/validate.js';
 import {
   objectKey,
+  qualifiedName,
   sourceDocumentSchema,
   targetDocumentSchema,
   policySchema,
@@ -13,6 +14,7 @@ import {
 import { renderDataType } from '../src/types.js';
 import {
   sourceFixture,
+  ordinaryView,
   ordinaryTable,
   fk,
   numberColumn,
@@ -351,4 +353,221 @@ test('dollar replacement patterns in quoted index names remain literal', () => {
   assert.ok(
     generateSql(target).includes('USING INDEX "APP"."IX$&$1" ENABLE VALIDATE'),
   );
+});
+
+test('modeled view facts block generation independently of annotations', () => {
+  const mutations: [string, (view: ReturnType<typeof ordinaryView>) => void][] =
+    [
+      ...(['editioning', 'typed', 'superview', 'containerData'] as const).map(
+        (flag) =>
+          [
+            'UNSUPPORTED_VIEW',
+            (view: ReturnType<typeof ordinaryView>) => {
+              view[flag] = true;
+            },
+          ] as [string, (view: ReturnType<typeof ordinaryView>) => void],
+      ),
+      [
+        'DUPLICATE_VIEW_COLUMN',
+        (view) => {
+          view.columns = ['ID', 'ID'];
+        },
+      ],
+      [
+        'UNSUPPORTED_COLLATION',
+        (view) => {
+          view.collation = 'BINARY_CI';
+        },
+      ],
+      [
+        'UNSUPPORTED_VIEW',
+        (view) => {
+          view.readOnly = true;
+          view.checkOption = 'LOCAL';
+        },
+      ],
+      [
+        'OBJECT_NAME_COLLISION',
+        (view) => {
+          view.reference = { owner: 'APP', name: 'CHILD' };
+        },
+      ],
+    ];
+  for (const [code, mutate] of mutations) {
+    const target = transformSource(sourceFixture()),
+      view = ordinaryView('V');
+    mutate(view);
+    target.views = [view];
+    target.targetViews = [view.reference];
+    assert.ok(
+      validateTarget(target).some(
+        (d) => d.code === code && d.object === qualifiedName(view.reference),
+      ),
+      code,
+    );
+    assert.ok(
+      transformationReport(target).some((d) => d.code === code),
+      code,
+    );
+    assert.throws(() => generateSql(target), new RegExp(code));
+  }
+});
+
+test('unreachable views and retained nonroot FKs cannot expand the closure', () => {
+  const target = transformSource(sourceFixture()),
+    view = ordinaryView('EXTRA');
+  const extra = ordinaryTable('APP', 'EXTRA_TABLE');
+  extra.role = 'view-dependency';
+  view.role = 'dependency';
+  view.dependencies = [
+    { reference: extra.reference, type: 'TABLE', databaseLink: null },
+  ];
+  target.views.push(view);
+  target.tables.push(extra);
+  assert.ok(hasError(target, 'EXTRA_VIEW'));
+  assert.ok(hasError(target, 'EXTRA_TABLE'));
+  target.tables[1].constraints.push(fk('FK_EXTRA', extra.reference));
+  assert.ok(hasError(target, 'EXTRA_TABLE'));
+  assert.throws(() => generateSql(target), /EXTRA_VIEW/);
+});
+
+test('view diamonds, duplicate edges, mixed table roles and shuffles are deterministic', () => {
+  const target = transformSource(sourceFixture());
+  const views = ['ROOT', 'a', 'Z', 'BASE'].map(ordinaryView);
+  for (const view of views.slice(1)) view.role = 'dependency';
+  const edge = (view: (typeof views)[number]) => ({
+    reference: view.reference,
+    type: 'VIEW',
+    databaseLink: null,
+  });
+  views[0].dependencies = [edge(views[1]), edge(views[2]), edge(views[1])];
+  views[1].dependencies = [edge(views[3])];
+  views[2].dependencies = [edge(views[3])];
+  views[3].dependencies = target.tables.map((t) => ({
+    reference: t.reference,
+    type: 'TABLE',
+    databaseLink: null,
+  }));
+  target.views = views;
+  target.targetViews = [views[0].reference];
+  assert.deepEqual(validateTarget(target), []);
+  const sql = generateSql(target);
+  assert.ok(
+    sql.indexOf('CREATE VIEW "REPORTING"."Z"') <
+      sql.indexOf('CREATE VIEW "REPORTING"."a"'),
+  );
+  target.tables.reverse();
+  for (const table of target.tables) {
+    table.columns.reverse();
+    table.indexes.reverse();
+    table.constraints.reverse();
+  }
+  target.views.reverse();
+  for (const view of target.views) view.dependencies.reverse();
+  assert.equal(generateSql(target), sql);
+  target.tables.find((t) => t.role === 'direct-parent')!.role =
+    'view-dependency';
+  assert.ok(hasError(target, 'ROLE_MISMATCH'));
+});
+
+test('missing roots, missing view edges and cycles remain blocking', () => {
+  const target = transformSource(sourceFixture()),
+    view = ordinaryView('V');
+  target.targetViews = [view.reference];
+  assert.ok(hasError(target, 'MISSING_TARGET'));
+  target.views = [view];
+  view.dependencies = [
+    {
+      reference: { owner: 'REPORTING', name: 'ABSENT' },
+      type: 'VIEW',
+      databaseLink: null,
+    },
+  ];
+  assert.ok(hasError(target, 'MISSING_VIEW_DEPENDENCY'));
+  view.dependencies[0].reference = view.reference;
+  assert.ok(hasError(target, 'VIEW_DEPENDENCY_CYCLE'));
+  assert.throws(() => generateSql(target), /VIEW_DEPENDENCY_CYCLE/);
+});
+
+test('timestamp precision boundaries and inconsistent metadata are checked before rendering', () => {
+  for (const scale of [-1, 0, 9, 10, 99]) {
+    const target = transformSource(sourceFixture()),
+      column = numberColumn('TS', 3);
+    column.nullable = true;
+    column.dataType.name = 'TIMESTAMP';
+    column.dataType.scale = scale;
+    target.tables[0].columns.push(column);
+    if (scale === 0 || scale === 9) {
+      assert.deepEqual(validateTarget(target), []);
+      assert.ok(generateSql(target).includes(`TIMESTAMP(${scale})`));
+    } else {
+      assert.ok(
+        validateTarget(target).some(
+          (d) => d.code === 'UNSUPPORTED_TYPE' && d.object.endsWith('.TS'),
+        ),
+      );
+      assert.throws(() => generateSql(target), /UNSUPPORTED_TYPE/);
+    }
+  }
+  const column = numberColumn('TS', 1);
+  column.dataType.name = 'TIMESTAMP(6)';
+  column.dataType.scale = 9;
+  assert.throws(() => renderDataType(column, policySchema.parse({})), /agree/);
+});
+
+test('view-only table dependencies are accepted without expanding their foreign keys', () => {
+  const source = sourceFixture(),
+    view = ordinaryView('V');
+  source.targetTables = [];
+  source.targetViews = [view.reference];
+  source.views = [view];
+  source.tables = [source.tables[1]];
+  source.tables[0].role = 'view-dependency';
+  view.dependencies = [
+    {
+      reference: source.tables[0].reference,
+      type: 'TABLE',
+      databaseLink: null,
+    },
+  ];
+  const target = transformSource(source);
+  assert.deepEqual(validateTarget(target), []);
+  assert.ok(!generateSql(target).includes('GRANDPARENT'));
+  target.views[0].dependencies[0].databaseLink = 'REMOTE';
+  assert.ok(hasError(target, 'REMOTE_VIEW_DEPENDENCY'));
+  assert.ok(hasError(target, 'EXTRA_TABLE'));
+});
+
+test('CLI rejects an invalid target before creating SQL', async () => {
+  const { mkdtemp, writeFile, access, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const directory = await mkdtemp(join(tmpdir(), 'semantic-validation-'));
+  try {
+    const target = transformSource(sourceFixture());
+    const view = ordinaryView('UNRELATED');
+    view.role = 'dependency';
+    target.views.push(view);
+    const input = join(directory, 'target.json'),
+      output = join(directory, 'clone.sql');
+    await writeFile(input, JSON.stringify(target));
+    await assert.rejects(
+      promisify(execFile)(process.execPath, [
+        '--import',
+        'tsx',
+        'src/cli.ts',
+        'generate',
+        '--input',
+        input,
+        '--output',
+        output,
+      ]),
+      /EXTRA_VIEW/,
+    );
+    await assert.rejects(access(output), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

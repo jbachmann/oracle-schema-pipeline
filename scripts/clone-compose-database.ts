@@ -9,6 +9,25 @@ const selectedViews = [
   { owner: 'CATALOG', name: 'Product Availability' },
 ];
 const password = process.env.ORACLE_PWD ?? 'OracleDev123';
+const startupRetryCodes = new Set(['ORA-01017', 'ORA-01109']);
+
+async function waitForDatabase<T>(
+  service: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const deadline = Date.now() + 120_000;
+  for (;;) {
+    try {
+      return await operation();
+    } catch (error) {
+      const code = error instanceof Error ? /ORA-\d{5}/u.exec(error.message)?.[0] : undefined;
+      if (!code || !startupRetryCodes.has(code) || Date.now() >= deadline)
+        throw error;
+      console.log(`${service} is still opening (${code}); retrying...`);
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+}
 
 async function command(
   file: string,
@@ -125,14 +144,18 @@ async function main(): Promise<void> {
   const destinationDsn =
     process.env.ORACLE_DESTINATION_DSN ??
     (await publishedDsn('oracle-destination'));
-  const existingSchemas = await destinationSchemaCount(destinationDsn);
+  const existingSchemas = await waitForDatabase('Destination', () =>
+    destinationSchemaCount(destinationDsn),
+  );
   if (existingSchemas !== 0) {
     throw new Error(
       `Destination contains ${existingSchemas} managed schema(s). Refusing to overwrite or drop them.`,
     );
   }
 
-  const tables = await applicationTables(sourceDsn);
+  const tables = await waitForDatabase('Source', () =>
+    applicationTables(sourceDsn),
+  );
   if (tables.length !== 98)
     throw new Error(
       `Expected 98 seeded source tables; found ${tables.length}.`,

@@ -41,6 +41,16 @@ services:
   oracle-destination:
     <<: *oracle-common
     hostname: oracle-destination
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          "printf 'whenever sqlerror exit failure\\nset heading off feedback off pages 0\\nalter session set container=FREEPDB1;\\nselect 1 from dual;\\n' | sqlplus -s / as sysdba | grep -q '^[[:space:]]*1[[:space:]]*$'",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 5m
     ports:
       - '${ORACLE_DESTINATION_PORT:-1522}:1521'
       - '${ORACLE_DESTINATION_EM_PORT:-5501}:5500'

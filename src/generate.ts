@@ -1,3 +1,4 @@
+import { analyzeTarget, compareOrdinal } from './semantic.js';
 import { renderIdentity } from './identity.js';
 import {
   quoteIdentifier,
@@ -52,7 +53,7 @@ function createTable(table: TableDefinition, document: TargetDocument): string {
 export function generateSql(input: unknown): string {
   const document = assertValidTarget(input);
   const tables = [...document.tables].sort((left, right) =>
-    qualifiedName(left.reference) < qualifiedName(right.reference) ? -1 : 1,
+    compareOrdinal(objectKey(left.reference), objectKey(right.reference)),
   );
   const statements: string[] = [
     '-- Generated from oracle-schema-pipeline format ' +
@@ -99,7 +100,9 @@ export function generateSql(input: unknown): string {
     '-- Phase 3: standalone and constraint-supporting indexes, exactly once.',
   );
   for (const table of tables) {
-    for (const index of table.indexes) {
+    for (const index of [...table.indexes].sort((a, b) =>
+      compareOrdinal(objectKey(a.reference), objectKey(b.reference)),
+    )) {
       const bitmap = index.type.includes('BITMAP');
       const modifier = bitmap ? 'BITMAP ' : index.unique ? 'UNIQUE ' : '';
       const keys = index.keys
@@ -117,7 +120,9 @@ export function generateSql(input: unknown): string {
     '-- Phase 4: local constraints and candidate keys, reusing existing indexes.',
   );
   for (const table of tables) {
-    for (const constraint of table.constraints) {
+    for (const constraint of [...table.constraints].sort((a, b) =>
+      compareOrdinal(a.name, b.name),
+    )) {
       const prefix = `ALTER TABLE ${qualifiedName(table.reference)}`;
       const constraintName = quoteIdentifier(constraint.name);
       if (constraint.kind === 'foreign-key' || constraint.kind === 'not-null')
@@ -148,7 +153,9 @@ export function generateSql(input: unknown): string {
   statements.push('-- Phase 5: cross-schema REFERENCES grants.');
   const referenceGrants = new Set<string>();
   for (const table of tables)
-    for (const constraint of table.constraints) {
+    for (const constraint of [...table.constraints].sort((a, b) =>
+      compareOrdinal(a.name, b.name),
+    )) {
       if (
         constraint.kind === 'foreign-key' &&
         constraint.parentTable.owner !== table.reference.owner
@@ -161,7 +168,9 @@ export function generateSql(input: unknown): string {
   statements.push(...[...referenceGrants].sort());
   statements.push('-- Phase 6: selected target-origin foreign keys only.');
   for (const table of tables)
-    for (const constraint of table.constraints) {
+    for (const constraint of [...table.constraints].sort((a, b) =>
+      compareOrdinal(a.name, b.name),
+    )) {
       if (constraint.kind !== 'foreign-key') continue;
       const childColumns = constraint.columnPairs
         .map((pair) => quoteIdentifier(pair.childColumn))
@@ -179,31 +188,14 @@ export function generateSql(input: unknown): string {
     }
   {
     statements.push('-- Phase 7: conventional views.');
-    // Kahn-style ordering: a view becomes ready once none of its local view
-    // dependencies remain pending. Sorting each layer makes output reproducible.
-    const pending = new Map(
-        document.views.map((view) => [objectKey(view.reference), view]),
-      ),
-      ordered = [];
-    while (pending.size) {
-      const ready = [...pending]
-        .filter(([, view]) =>
-          view.dependencies
-            .filter((edge) => edge.type === 'VIEW' && !edge.databaseLink)
-            .every((edge) => !pending.has(objectKey(edge.reference))),
-        )
-        .sort(([a], [b]) => a.localeCompare(b));
-      if (!ready.length) throw new Error('VIEW_DEPENDENCY_CYCLE');
-      for (const [key, view] of ready) {
-        ordered.push(view);
-        pending.delete(key);
-      }
-    }
+    const { orderedViews: ordered } = analyzeTarget(document);
     const grants = new Set<string>();
     for (const view of ordered) {
       // Emit cross-schema grants immediately before the first dependent view;
       // Oracle requires the view owner to hold these privileges directly.
-      for (const edge of view.dependencies)
+      for (const edge of [...view.dependencies].sort((a, b) =>
+        compareOrdinal(objectKey(a.reference), objectKey(b.reference)),
+      ))
         if (
           !edge.databaseLink &&
           edge.reference.owner !== view.reference.owner
