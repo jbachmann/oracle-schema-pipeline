@@ -1,0 +1,44 @@
+name: oracle-schema-pipeline
+
+x-oracle-common: &oracle-common
+  image: container-registry.oracle.com/database/free:latest
+  environment:
+    ORACLE_PWD: ${ORACLE_PWD:-OracleDev123}
+  healthcheck:
+    test: ["CMD-SHELL", "echo 'select 1 from dual;' | sqlplus -s / as sysdba | grep -q 1"]
+    interval: 30s
+    timeout: 10s
+    retries: 20
+    start_period: 5m
+  restart: unless-stopped
+
+services:
+  oracle-source:
+    <<: *oracle-common
+    hostname: oracle-source
+    ports:
+      - "${ORACLE_SOURCE_PORT:-1521}:1521"
+      - "${ORACLE_SOURCE_EM_PORT:-5500}:5500"
+    healthcheck:
+      test: ["CMD-SHELL", "printf \"set heading off feedback off pages 0\\nalter session set container=FREEPDB1;\\nselect case when (select count(*) from dba_tables where owner in ('IAM','CATALOG','COMMERCE','FINANCE'))=98 and (select count(*) from dba_sequences where sequence_owner='IAM' and sequence_name='SOURCE_SEED_COMPLETE')=1 then 'READY' else 'WAIT' end from dual;\\n\" | sqlplus -s / as sysdba | grep -q READY"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 5m
+    volumes:
+      - oracle-source-data:/opt/oracle/oradata
+      - ./docker/oracle/source-init:/opt/oracle/scripts/custom:ro
+      - ./docker/oracle/source-startup:/opt/oracle/scripts/startup:ro
+
+  oracle-destination:
+    <<: *oracle-common
+    hostname: oracle-destination
+    ports:
+      - "${ORACLE_DESTINATION_PORT:-1522}:1521"
+      - "${ORACLE_DESTINATION_EM_PORT:-5501}:5500"
+    volumes:
+      - oracle-destination-data:/opt/oracle/oradata
+
+volumes:
+  oracle-source-data:
+  oracle-destination-data:
