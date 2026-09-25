@@ -11,12 +11,13 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
-    "benchmark:extraction": "node --import tsx scripts/benchmark-extraction.ts",
+    "benchmark:extraction": "node --import tsx test/scripts/benchmark-extraction.ts",
     "test:integration": "node --import tsx --test --test-concurrency=1 test/integration/*.test.ts",
-    "db:clone": "node --import tsx scripts/clone-compose-database.ts",
-    "db:reset-destination": "node --import tsx scripts/reset-compose-destination.ts",
+    "db:clone": "node --import tsx scripts/clone-database.ts",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:db:clone": "node --import tsx test/scripts/clone-compose-database.ts",
+    "test:db:reset-destination": "node --import tsx test/scripts/reset-compose-destination.ts"
   },
   "dependencies": {
     "exceljs": "4.4.0",

@@ -1,0 +1,6 @@
+-- Optional trusted setup. Add "prerequisiteSql": "prerequisites.sql" to config.json.
+-- For createSchemas=false, provision every generated owner here, for example:
+-- CREATE USER "APP" NO AUTHENTICATION DEFAULT TABLESPACE "USERS";
+-- ALTER USER "APP" QUOTA UNLIMITED ON "USERS";
+-- CREATE SEQUENCE "APP"."EXTERNAL_SEQUENCE";
+-- Keep this session in FREEPDB1. No SQL*Plus commands or secrets.

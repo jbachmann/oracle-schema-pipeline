@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "createSchemas": true,
+  "defaultTablespace": "USERS",
+  "maxStringSize": "STANDARD",
+  "externalPrerequisites": []
+}

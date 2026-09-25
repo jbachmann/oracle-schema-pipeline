@@ -1,3 +1,4 @@
+import { testComposeArgs, rejectDsnOverrides } from './compose.js';
 import { spawn } from 'node:child_process';
 
 const schemas = ['FINANCE', 'COMMERCE', 'CATALOG', 'IAM'];
@@ -20,9 +21,10 @@ async function command(
 }
 
 async function main(): Promise<void> {
+  rejectDsnOverrides();
   console.log('Starting Oracle destination...');
   await command('docker', [
-    'compose',
+    ...testComposeArgs,
     'up',
     '-d',
     '--wait',
@@ -40,7 +42,7 @@ async function main(): Promise<void> {
   END;`,
     )
     .join('');
-  const sql = `WHENEVER SQLERROR EXIT SQL.SQLCODE
+  const sql = `WHENEVER SQLERROR EXIT 1
 WHENEVER OSERROR EXIT FAILURE
 ALTER SESSION SET CONTAINER=FREEPDB1;
 BEGIN${dropBlocks}
@@ -63,7 +65,7 @@ EXIT SUCCESS
   await command(
     'docker',
     [
-      'compose',
+      ...testComposeArgs,
       'exec',
       '-T',
       'oracle-destination',

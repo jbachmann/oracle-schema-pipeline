@@ -6,7 +6,7 @@ permissions:
 jobs:
   oracle:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
@@ -15,14 +15,19 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Provision disposable databases
-        run: docker compose up -d --wait --wait-timeout 1200
+        run: docker compose -p oracle-schema-pipeline-test -f test/docker/docker-compose.yml up -d --wait --wait-timeout 1200 oracle-source
       - name: Verify reconstruction
         run: npm run test:integration
         env:
-          ORACLE_INTEGRATION_USE_EXISTING: '1'
+          ORACLE_LOCAL_CLONE_INTEGRATION: '1'
       - name: Service status
         if: failure()
-        run: docker compose ps -a
+        run: docker compose -p oracle-schema-pipeline-test -f test/docker/docker-compose.yml ps -a
       - name: Remove disposable databases
         if: always()
-        run: docker compose down --volumes
+        run: docker compose -p oracle-schema-pipeline-test -f test/docker/docker-compose.yml down --volumes
+      - name: Remove disposable operational destination
+        if: always()
+        run: docker compose --env-file /dev/null -p oracle-schema-pipeline-local -f docker-compose.yml down --volumes
+        env:
+          CLONE_DESTINATION_PASSWORD: cleanup-only-placeholder

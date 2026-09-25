@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "source": {
+    "user": "REPLACE_SOURCE_USER",
+    "password": "REPLACE_SOURCE_PASSWORD",
+    "dsn": "source.example:1521/SERVICE",
+    "catalogScope": "all"
+  },
+  "objects": "objects.json",
+  "policy": "policy.json",
+  "destination": {
+    "password": "REPLACE_DESTINATION_PASSWORD",
+    "port": 1522,
+    "startupTimeoutSeconds": 1200
+  }
+}

@@ -36,3 +36,6 @@ offline tests and TypeScript checking passed; six in-memory validation probes
 identified five accepted invalid/inconsistent models and one late render failure.
 Live Oracle integration was inspected, not run. These documentation changes do not
 implement the recommendations.
+
+Operational destination implementation: [Remote schema local clone](14-remote-schema-local-clone.md)
+resolves feature 11 with a disposable Compose-only destination; see ADR 0008.

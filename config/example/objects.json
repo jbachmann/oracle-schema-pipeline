@@ -1,0 +1,5 @@
+{
+  "version": 2,
+  "tables": [{ "owner": "APP", "name": "EXAMPLE_TABLE" }],
+  "views": []
+}

@@ -1,6 +1,6 @@
 # Feature: Remote structure extraction into a disposable local Oracle database
 
-- Status: Planned — implementation not started
+- Status: Implemented — verified 2026-09-25
 - Date: 2026-09-25
 - Request: Run one npm command to extract a configured remote Oracle structure,
   retain each run's artifacts, and replace a local Docker Oracle destination.
@@ -324,27 +324,27 @@ existing destination without isolating the test environment.
 
 ## Acceptance Criteria
 
-- [ ] One `npm run db:clone` uses only the configured remote source and produces a
+- [x] One `npm run db:clone` uses only the configured remote source and produces a
       running Docker destination containing the supported selected structure.
-- [ ] Configuration uses ignored `config/local/config.json` with adjacent selection,
+- [x] Configuration uses ignored `config/local/config.json` with adjacent selection,
       policy, optional TNS, and optional prerequisite SQL; no `.env` is needed.
-- [ ] Every run has a unique artifact directory; successful runs contain selection,
+- [x] Every run has a unique artifact directory; successful runs contain selection,
       policy, source, dictionary, target/report/completion, SQL, and run result files.
-- [ ] Extraction, transformation, validation, generation, and preflight failures
+- [x] Extraction, transformation, validation, generation, and preflight failures
       leave the previous destination container and volume intact.
-- [ ] After successful generation, old destination storage is removed before a
+- [x] After successful generation, old destination storage is removed before a
       fresh database is created, including when the old container is stopped.
-- [ ] Setup executes before generated SQL and failure stops loading immediately.
-- [ ] Missing prerequisites and unsupported metadata fail explicitly; policy
+- [x] Setup executes before generated SQL and failure stops loading immediately.
+- [x] Missing prerequisites and unsupported metadata fail explicitly; policy
       acknowledgement never masquerades as successful provisioning.
-- [ ] Success requires destination verification; failed or interrupted runs cannot
+- [x] Success requires destination verification; failed or interrupted runs cannot
       be mistaken for success and never overwrite earlier artifacts.
-- [ ] Source access remains read-only; no application rows are copied; offline
+- [x] Source access remains read-only; no application rows are copied; offline
       stages remain offline; model versions and deterministic SQL remain unchanged.
-- [ ] Credentials never enter argv, logs, snapshots, generated artifacts, or results.
-- [ ] Seeded fixtures, scripts, integration tests, and CI use explicit test context;
+- [x] Credentials never enter argv, logs, snapshots, generated artifacts, or results.
+- [x] Seeded fixtures, scripts, integration tests, and CI use explicit test context;
       operational reset never touches those resources or old-project resources.
-- [ ] Unit and disposable integration checks pass; README and ADR changes document
+- [x] Unit and disposable integration checks pass; README and ADR changes document
       the destination-write boundary and changed npm-command behavior.
 
 ## Risks and Open Questions
@@ -368,3 +368,35 @@ adds. Snapshot consistency of a concurrently changing remote source remains the
 existing extraction limitation described in feature 12; no snapshot guarantee is
 introduced here. A killed process can leave a stale run lock or staging directory;
 document explicit recovery without adopting or overwriting prior run artifacts.
+
+## Implementation verification
+
+Implemented the operational workflow, strict config/templates, immutable run
+artifacts, shared per-user destination lock, endpoint/resource checks, prerequisite
+setup and bounded destination verification. Seeded fixtures and helpers now use
+`test/docker/` and `test/scripts/`; ADR 0008 records the destination-write boundary.
+
+Verified with typecheck, build, 204 offline tests and all five live integration tests.
+The renamed `test:db:reset-destination` and `test:db:clone` smoke checks pass,
+and `benchmark:extraction -- 32` still completes all four workloads after its move.
+The disposable clone suite exercises the actual npm entry point in a temporary
+checkout, repeated volume replacement, source row preservation, empty destination
+tables, independent keys/comments/views, invalid-view rejection, SQL error exit
+status 1, a generation publication failure preserving the existing destination,
+and prerequisite success/failure. The original seeded reconstruction, restricted
+catalog access and batching comparisons also pass in the explicit test project.
+
+Live image: Oracle `23.26.3.0.0`, Linux amd64,
+`sha256:cdf2f86bedfa41904dfd7dbf27defe90d46a2fb8b34d85ad1c279f2bda839420`.
+Both Compose definitions pin registry digest
+`sha256:f988b0c04c4c386cd306a2a914c0d7a9702d83acc31b064a28ad8eb6278a8fba`.
+Testing used a macOS x64 Node process and a Docker VM with approximately 5.8 GiB
+available, keeping two Oracle databases active at a time. PDB health requires
+READ WRITE, and test listener registration has a separate bounded readiness check.
+The cold-database batching comparison has a ten-minute test timeout.
+
+The orchestrator adapts only the exact generated SQL*Plus preamble, replacing its
+client error/echo settings while preserving the generated SQL body. It preserves
+known publication error codes without forwarding raw child errors. The destination
+lock lives under the system temporary directory and is shared across checkouts;
+its location and stale-lock recovery are documented in README.

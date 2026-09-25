@@ -1,5 +1,10 @@
 # Feature: Consistent destination orchestration
 
+Operational policy update: [feature 14](14-remote-schema-local-clone.md) and
+[ADR 0008](../adr/0008-disposable-local-destination-orchestration.md) supersede
+the preserve-existing-destination proposal for `db:clone`: successful generation
+authorizes replacement of the fixed local Compose destination and its volume.
+
 - Status: Draft request — captured from architecture review; not approved for implementation
 - Date: 2026-09-24
 - Priority: Medium

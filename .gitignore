@@ -4,3 +4,5 @@ dist/
 artifacts/
 
 .oracle-schema-tmp/
+
+config/local/

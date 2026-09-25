@@ -3,7 +3,9 @@
 A catalog-driven exporter with a versioned JSON intermediate representation.
 The source database is queried for facts, not for CREATE/ALTER statements.
 No DBMS_METADATA.GET_DDL, DDL string rewriting, source staging tables, or DBMS_OUTPUT
-is used. Only the extraction command connects to Oracle; all other commands run offline.
+is used. Within the core pipeline only extraction connects to Oracle. The separate
+`db:clone` orchestrator also provisions and verifies its disposable local destination
+([ADR 0008](docs/adr/0008-disposable-local-destination-orchestration.md)).
 
 **Status:** TypeScript checking, compilation, local tests, and a live Oracle Free
 round-trip integration suite pass. Read the supported-subset section before a
@@ -521,39 +523,74 @@ ORACLE_INTEGRATION_USE_EXISTING=1 npm run test:integration
 ```
 
 `ORACLE_PWD` defaults to the same development password as the Compose file.
-`ORACLE_SOURCE_DSN` and `ORACLE_DESTINATION_DSN` can override automatic listener
-discovery.
+DSN overrides are rejected; listener discovery always uses the explicit
+`oracle-schema-pipeline-test` project and `test/docker/docker-compose.yml`.
 
-### Populate the destination without testing
+### Clone a remote structure into a disposable local database
 
-Run the complete operational flow without structural comparison or teardown:
+**Migration:** `npm run db:clone` now replaces the entire local destination and its
+volume after generation succeeds. The old seeded commands are `test:db:clone` and
+`test:db:reset-destination`; `db:reset-destination` has been removed. Old
+`oracle-schema-pipeline` resources are never adopted or deleted. Stop/remove those
+manually if desired, or choose different ports for the new projects.
+
+Follow [one-time configuration setup](config/example/README.md), then run:
 
 ```bash
 npm run db:clone
 ```
 
-This starts both Compose services, waits for source seeding, extracts all seeded
-tables, writes `data-dictionary.xlsx`, transforms and validates the model, generates
-SQL, and loads it into the destination. Containers and volumes remain running.
-Pipeline files are retained
-under `artifacts/db-clone-<timestamp>/`.
+This reads ignored `config/local/config.json`, extracts the explicit remote object
+selection, creates a dictionary, transforms, validates and generates SQL. Source
+access is read-only; application rows are not copied. The root Compose file contains
+only the destination, in project `oracle-schema-pipeline-local`, on a local Docker
+socket endpoint. Source and destination environment/DSN overrides are not used.
+The listener binds to `127.0.0.1:1522` by default, service `FREEPDB1`.
 
-The command is intentionally non-destructive. If any managed destination schema
-already exists, it exits without dropping or replacing anything. Use a fresh
-destination volume for each clone. The Compose port and DSN environment overrides
-described above also apply.
+Only after all artifacts and preflight checks succeed does the command remove the
+old container and volume, including a stopped destination, then start a fresh
+Oracle database. Optional trusted prerequisite SQL executes once before replay.
+Missing required setup fails before reset. Generation creates schema owners with
+`NO AUTHENTICATION`; these are not login accounts. Inspect using a privileged local
+account and the configured destination bootstrap password.
 
-To clear only the pipeline-managed schemas from the destination and then run the
-clone again:
+Each attempt retains a private `artifacts/db-clone-<UTC timestamp>-<random>/` folder:
+`objects.json`, `policy.json`, `source.json`, `data-dictionary.xlsx`, `target.json`,
+`report.json`, `target.json.complete.json`, `clone.sql`, and `run-result.json` when
+publication succeeds. Failed runs may contain a subset. Results record stage,
+reset status, timestamps, error code, image ID and optional setup hash/length.
+They exclude credentials, DSNs, raw subprocess errors and setup SQL. No prior
+artifact is overwritten. Review `report.json` for pipeline diagnostics.
+
+Success requires modeled objects to exist and be valid; this is bounded checking,
+not complete semantic equivalence. The destination stays running. After reset,
+startup/setup/replay failures lose the old database and may leave partial new
+structure. Fix configuration and run again; the command never retries replay into
+a partial database. Before reset, failures leave the previous database intact.
+
+A per-user lock, `oracle-schema-pipeline-local-<uid>.lock` under the Node.js
+system temporary directory, prevents concurrent runs across checkouts. SIGINT/SIGTERM stop
+children and attempt to publish failure/release the owned lock. A missing result
+means incomplete, never success. After SIGKILL or machine failure, verify no clone
+process remains active before manually removing a stale lock; preserve its run
+artifacts. No automatic retention cleanup occurs.
+
+The operational image is pinned to Oracle Free digest
+`sha256:f988b0c04c4c386cd306a2a914c0d7a9702d83acc31b064a28ad8eb6278a8fba`.
+Live testing used Oracle `23.26.3.0.0`, image ID
+`sha256:cdf2f86bedfa41904dfd7dbf27defe90d46a2fb8b34d85ad1c279f2bda839420`.
+The locally available image is amd64; architecture emulation may be required on ARM.
+Arbitrary source Oracle releases are not guaranteed compatible.
+
+Seeded helpers remain available separately:
 
 ```bash
-npm run db:reset-destination
-npm run db:clone
+npm run test:db:reset-destination
+npm run test:db:clone
 ```
 
-The reset drops `FINANCE`, `COMMERCE`, `CATALOG`, and `IAM` with `CASCADE` from
-`oracle-destination`. It never touches the source, other destination schemas, the
-container, or its named volume.
+They use `test/docker/` and `test/scripts/`, retain the four-schema seeded behavior,
+and cannot reset the operational project's storage.
 
 For a real replay, review the SQL and run it as an appropriately privileged
 administrator connected directly to the destination PDB, with UTF-8 client input:
@@ -662,10 +699,10 @@ npm ci
 npm run typecheck
 npm run build
 npm test
-docker compose down --volumes
-docker compose up -d --wait --wait-timeout 1200
+docker compose -p oracle-schema-pipeline-test -f test/docker/docker-compose.yml down --volumes
+docker compose -p oracle-schema-pipeline-test -f test/docker/docker-compose.yml up -d --wait --wait-timeout 1200
 ORACLE_INTEGRATION_USE_EXISTING=1 npm run test:integration
-docker compose down --volumes
+docker compose -p oracle-schema-pipeline-test -f test/docker/docker-compose.yml down --volumes
 ```
 
 GitHub Actions runs `Offline checks` on pushes and pull requests. Configure that
@@ -683,3 +720,8 @@ The Compose image remains `latest`, so record the tested database version when
 reporting results; this is reproducible provisioning, not an image-version pin.
 No production DSNs or credentials are configured in CI, and database logs/artifacts
 are not uploaded because they can contain credentials or source metadata.
+
+The disposable operational integration suite is opt-in:
+`ORACLE_LOCAL_CLONE_INTEGRATION=1 npm run test:integration`. It uses a temporary
+checkout/config, listener 1529, and refuses pre-existing operational resources.
+It cleans up only the operational resources it creates; CI also tears down the test project.

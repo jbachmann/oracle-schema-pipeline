@@ -10,8 +10,8 @@ Keep command parsing in `cli.ts` and focused rendering helpers in `types.ts` and
 
 Unit tests and fixtures live in `test/`. Oracle round-trip tests live in
 `test/integration/`. Synthetic inputs and generated examples are under `examples/`.
-Docker initialization belongs in `docker/`; operational helpers belong in
-`scripts/`. Architecture decisions and feature-request guidance live in `docs/`.
+Seeded Docker initialization belongs in `test/docker/`; seeded clone/reset and
+benchmark helpers belong in `test/scripts/`. Operational helpers belong in `scripts/`. Architecture decisions and feature-request guidance live in `docs/`.
 
 ## Build, Test, and Development Commands
 
@@ -49,6 +49,10 @@ capabilities; add an ADR when changing an invariant from ADR 0001.
 
 ## Security & Architecture Constraints
 
-Only extraction may connect to Oracle, and source access must remain read-only.
+Within the core pipeline only extraction may connect to Oracle, and source access
+must remain read-only. ADR 0008 authorizes the separate `scripts/` orchestration
+boundary to provision, replay, and verify only the fixed local Compose destination.
+Test fixtures and helpers use the explicit test Compose project; never adopt old
+root-project resources.
 Never place passwords in arguments, fixtures, logs, or artifacts. Generation must
 fail closed on unsupported metadata, revalidate input, and never overwrite output.

@@ -1,8 +1,9 @@
+import { testComposeArgs, rejectDsnOverrides } from './compose.js';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import oracle from 'oracledb';
-import { verifyCompletion } from '../src/completion.js';
+import { verifyCompletion } from '../../src/completion.js';
 
 const schemas = ['IAM', 'CATALOG', 'COMMERCE', 'FINANCE'];
 const selectedViews = [
@@ -63,12 +64,12 @@ async function command(
 }
 
 async function compose(args: string[], input?: string) {
-  return await command('docker', ['compose', ...args], { input });
+  return await command('docker', [...testComposeArgs, ...args], { input });
 }
 
 async function publishedDsn(service: string): Promise<string> {
   const { stdout } = await command('docker', [
-    'compose',
+    ...testComposeArgs,
     'port',
     service,
     '1521',
@@ -137,14 +138,14 @@ async function pipeline(args: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  rejectDsnOverrides();
   console.log('Starting Oracle source and destination...');
   await compose(['up', '-d', '--wait']);
 
   const sourceDsn =
-    process.env.ORACLE_SOURCE_DSN ?? (await publishedDsn('oracle-source'));
+    await publishedDsn('oracle-source');
   const destinationDsn =
-    process.env.ORACLE_DESTINATION_DSN ??
-    (await publishedDsn('oracle-destination'));
+    await publishedDsn('oracle-destination');
   const existingSchemas = await waitForDatabase('Destination', () =>
     destinationSchemaCount(destinationDsn),
   );
@@ -215,7 +216,7 @@ async function main(): Promise<void> {
   await pipeline(['generate', '--input', targetFile, '--output', sqlFile]);
 
   const generatedSql = await readFile(sqlFile, 'utf8');
-  const replay = `WHENEVER SQLERROR EXIT SQL.SQLCODE\nWHENEVER OSERROR EXIT FAILURE\nALTER SESSION SET CONTAINER=FREEPDB1;\n${generatedSql}\nEXIT SUCCESS\n`;
+  const replay = `WHENEVER SQLERROR EXIT 1\nWHENEVER OSERROR EXIT FAILURE\nALTER SESSION SET CONTAINER=FREEPDB1;\n${generatedSql}\nEXIT SUCCESS\n`;
   console.log('Loading generated SQL into destination...');
   await compose(
     ['exec', '-T', 'oracle-destination', 'sqlplus', '-s', '/ as sysdba'],

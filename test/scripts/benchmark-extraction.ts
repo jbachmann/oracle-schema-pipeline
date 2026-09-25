@@ -1,11 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { OracleCatalog } from '../src/catalog.js';
-import { extractSource } from '../src/extract.js';
+import { OracleCatalog } from '../../src/catalog.js';
+import { extractSource } from '../../src/extract.js';
 import {
   benchmarkConnection,
   type Workload,
-} from '../test/helpers/benchmark-catalog.js';
+} from '../helpers/benchmark-catalog.js';
 
 const workloads: Workload[] = [
   { tables: 1, constraints: 1, indexes: 1, viewDepth: 0, latencyMs: 0 },

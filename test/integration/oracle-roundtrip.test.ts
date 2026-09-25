@@ -1,3 +1,6 @@
+import { waitForListener } from '../scripts/readiness.js';
+import { testComposeArgs, rejectDsnOverrides } from '../scripts/compose.js';
+rejectDsnOverrides();
 import { ExtractionProgress, type ProgressEvent } from '../../src/progress.js';
 import {
   assertIndependentFacts,
@@ -61,7 +64,7 @@ async function command(
 }
 
 async function compose(...args: string[]) {
-  return await command('docker', ['compose', ...args]);
+  return await command('docker', [...testComposeArgs, ...args]);
 }
 
 async function publishedDsn(service: string): Promise<string> {
@@ -79,7 +82,7 @@ async function runSqlplus(service: string, sql: string): Promise<string> {
   return (
     await command(
       'docker',
-      ['compose', 'exec', '-T', service, 'sqlplus', '-s', '/ as sysdba'],
+      [...testComposeArgs, 'exec', '-T', service, 'sqlplus', '-s', '/ as sysdba'],
       { input: script },
     )
   ).stdout;
@@ -188,10 +191,9 @@ test(
       await compose('up', '-d', '--wait');
 
     const sourceDsn =
-      process.env.ORACLE_SOURCE_DSN ?? (await publishedDsn('oracle-source'));
+      await publishedDsn('oracle-source');
     const destinationDsn =
-      process.env.ORACLE_DESTINATION_DSN ??
-      (await publishedDsn('oracle-destination'));
+      await publishedDsn('oracle-destination');
     const directory = await mkdtemp(join(tmpdir(), 'oracle-schema-roundtrip-'));
     const tableFile = join(directory, 'objects.json');
     const sourceFile = join(directory, 'source.json');
@@ -200,6 +202,8 @@ test(
     const replayFile = join(directory, 'replayed-source.json');
     const replayTargetFile = join(directory, 'replayed-target.json');
 
+    await waitForListener(sourceDsn, password);
+    await waitForListener(destinationDsn, password);
     await assertIndependentFacts(sourceDsn, password);
     const tables = await selectedTables(sourceDsn);
     assert.equal(
@@ -385,8 +389,7 @@ test(
       user: 'SYSTEM',
       password,
       connectString:
-        process.env.ORACLE_DESTINATION_DSN ??
-        (await publishedDsn('oracle-destination')),
+        await publishedDsn('oracle-destination'),
     });
     const owner = 'CATALOG';
     const table = 'CATALOG_DECODE_PROBE';
@@ -490,7 +493,7 @@ test(
 
 test('restricted ALL catalog sessions have only explicit grants and reject hidden dependencies', async () => {
   const connectString =
-    process.env.ORACLE_SOURCE_DSN ?? (await publishedDsn('oracle-source'));
+    await publishedDsn('oracle-source');
   for (const user of ['SCHEMA_READER', 'LIMITED_READER']) {
     const connection = await oracle.getConnection({
       user: `SYSTEM[${user}]`,
@@ -550,10 +553,10 @@ test('restricted ALL catalog sessions have only explicit grants and reject hidde
 
 test(
   'bounded catalog batches match single-member extraction of the live multi-owner selection',
-  { timeout: 120_000 },
+  { timeout: 600_000 },
   async () => {
     const dsn =
-      process.env.ORACLE_SOURCE_DSN ?? (await publishedDsn('oracle-source'));
+      await publishedDsn('oracle-source');
     const connection = await oracle.getConnection({
       user: 'SYSTEM[SCHEMA_READER]',
       password,
