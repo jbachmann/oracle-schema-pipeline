@@ -1,5 +1,5 @@
 import { analyzeTarget } from './semantic.js';
-import { renderIdentity } from './identity.js';
+import { prepareSql } from './prepare.js';
 import {
   targetDocumentSchema,
   objectKey,
@@ -7,12 +7,13 @@ import {
   type Diagnostic,
   type TargetDocument,
 } from './model.js';
-import { renderDataType } from './types.js';
-import { renderComment } from './comments.js';
 
 /** Validate semantic references in addition to the JSON document's shape. */
 export function validateTarget(input: unknown): Diagnostic[] {
-  const document = targetDocumentSchema.parse(input);
+  return validateParsedTarget(targetDocumentSchema.parse(input)).diagnostics;
+}
+
+function validateParsedTarget(document: TargetDocument) {
   const diagnostics: Diagnostic[] = [
     ...document.diagnostics.filter((item) => item.severity !== 'change'),
   ];
@@ -30,13 +31,6 @@ export function validateTarget(input: unknown): Diagnostic[] {
     const isTarget = targetKeys.has(objectKey(table.reference));
     for (const feature of table.unsupportedFeatures)
       error('UNSUPPORTED_FEATURE', tableName, feature);
-    if (table.comment !== null) {
-      try {
-        renderComment(table.reference, null, table.comment);
-      } catch (reason) {
-        error('UNRENDERABLE_TABLE_COMMENT', tableName, String(reason));
-      }
-    }
     const columnNames = new Set(table.columns.map((column) => column.name));
     if (columnNames.size !== table.columns.length)
       error('DUPLICATE_COLUMN', tableName, 'Column names must be unique.');
@@ -65,25 +59,6 @@ export function validateTarget(input: unknown): Diagnostic[] {
           `Multiple NOT NULL constraints on ${column.name} need manual review.`,
         );
       const columnName = `${tableName}.${column.name}`;
-      if (column.comment !== null) {
-        try {
-          renderComment(table.reference, column.name, column.comment);
-        } catch (reason) {
-          error('UNRENDERABLE_COLUMN_COMMENT', columnName, String(reason));
-        }
-      }
-      try {
-        renderDataType(column, document.policy);
-      } catch (reason) {
-        error('UNSUPPORTED_TYPE', columnName, String(reason));
-      }
-      if (column.identity) {
-        try {
-          renderIdentity(column);
-        } catch (reason) {
-          error('UNSUPPORTED_IDENTITY', columnName, String(reason));
-        }
-      }
       if (column.collation && column.collation !== 'USING_NLS_COMP')
         error(
           'UNSUPPORTED_COLLATION',
@@ -357,23 +332,32 @@ export function validateTarget(input: unknown): Diagnostic[] {
       'policy',
       'Use createSchemas=false when prerequisite objects are provisioned in advance.',
     );
+  const preparation = prepareSql(document, analysis);
+  diagnostics.push(...preparation.diagnostics);
   // Deduplicate diagnostics so repeated validation remains stable.
-  return [
-    ...new Map(
-      diagnostics.map((item) => [JSON.stringify(item), item]),
-    ).values(),
-  ];
+  return {
+    preparation,
+    diagnostics: [
+      ...new Map(
+        diagnostics.map((item) => [JSON.stringify(item), item]),
+      ).values(),
+    ],
+  };
 }
 export function assertValidTarget(input: unknown): TargetDocument {
+  return assertPreparedTarget(input).document;
+}
+
+/** Unknown-input boundary shared by assertion and generation; no prepared input accepted. */
+export function assertPreparedTarget(input: unknown) {
   const document = targetDocumentSchema.parse(input);
-  const errors = validateTarget(document).filter(
-    (item) => item.severity === 'error',
-  );
+  const result = validateParsedTarget(document);
+  const errors = result.diagnostics.filter((item) => item.severity === 'error');
   if (errors.length)
     throw new Error(
       errors
         .map((item) => `${item.code}: ${item.object}: ${item.message}`)
         .join('\n'),
     );
-  return document;
+  return { document, preparation: result.preparation };
 }

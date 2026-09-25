@@ -38,3 +38,25 @@ read-only and all subsequent stages remain offline. Output never overwrites file
 ADR 0004 supersedes the v3 compatibility statement: format v4 makes complete view
 text own restriction syntax and requires re-extraction of older artifacts. The
 semantic validation and dependency rules in this decision continue to apply.
+
+## Generation preflight (2026-09-24)
+
+Validation now combines typed semantic analysis with internal SQL preparation.
+Each public validate/assert/generate boundary strictly parses unknown input once;
+internal analysis consumes that parsed document without reparsing or cloning it.
+Preparation consumes the same dependency ordering and returns ordered SQL operations
+with object provenance and diagnostics. It never calls validation or generation,
+so the dependency direction remains acyclic. Only successful independent validation
+allows generation to join operations into the final script; prepared objects are
+not accepted as generation inputs or persisted in the document.
+
+Preparation checks physical UTF-8 lines, including all emitted syntax, against the
+unchanged 2,400-byte SQL*Plus limit. `SQL_LINE_LIMIT` identifies the object, the
+operation-local line number, measured bytes, and limit. Existing datatype, identity,
+and comment failure codes remain stable; `UNRENDERABLE_INDEX_KEY` covers index keys
+that cannot be quoted. Errors in one operation do not suppress diagnostics for
+other operations. SQL fragments remain trusted and opaque; no wrapping or rewriting
+is introduced. Checks run per operation without constructing a second full script
+for validation, leaving room for future streaming. Transform/validate semantic
+errors still use exit 2, generation failure uses exit 1, and publication stays
+non-overwriting. The JSON contract and supported SQL output remain unchanged.

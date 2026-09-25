@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import {
   sourceDocumentSchema,
-  targetDocumentSchema,
   selectionSchema,
   policySchema,
 } from './model.js';
@@ -175,9 +174,7 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
     );
     if (errors.length) process.exitCode = 2;
   } else {
-    const target = targetDocumentSchema.parse(
-      await readJson(requireOption(values.input, 'input')),
-    );
+    const target = await readJson(requireOption(values.input, 'input'));
     if (command === 'validate') {
       const diagnostics = validateTarget(target);
       if (values.report)

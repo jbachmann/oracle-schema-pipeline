@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { extractSource, type SourceCatalog } from '../src/extract.js';
 import { transformSource, transformationReport } from '../src/transform.js';
 import { generateSql } from '../src/generate.js';
-import { validateTarget } from '../src/validate.js';
+import { assertValidTarget, validateTarget } from '../src/validate.js';
 import {
   objectKey,
   qualifiedName,
@@ -679,4 +679,166 @@ test('table FK cycles remain valid when both tables are explicit targets', () =>
   assert.equal((sql.match(/FOREIGN KEY/g) ?? []).length, 2);
   assert.ok(sql.lastIndexOf('CREATE TABLE') < sql.indexOf('FOREIGN KEY'));
   assert.ok(sql.lastIndexOf('PRIMARY KEY') < sql.indexOf('FOREIGN KEY'));
+});
+
+for (const character of ['x', 'Ω', '😀']) {
+  test(`preflight checks exact UTF-8 physical-line limits for ${character}`, () => {
+    const source = sourceFixture();
+    const prefix = '  "TENANT_ID" NUMBER(10,0) DEFAULT ';
+    const overhead = Buffer.byteLength(prefix + "'',", 'utf8');
+    const available = 2400 - overhead;
+    const width = Buffer.byteLength(character, 'utf8');
+    const content =
+      character.repeat(Math.floor(available / width)) +
+      'x'.repeat(available % width);
+    source.tables[0].columns[0].defaultExpression = `'${content}'`;
+    const boundary = transformSource(source);
+    assert.deepEqual(validateTarget(boundary), []);
+    assert.ok(
+      generateSql(boundary)
+        .split('\n')
+        .some((line) => Buffer.byteLength(line, 'utf8') === 2400),
+    );
+    source.tables[0].columns[0].defaultExpression = `'${content}x'`;
+    const target = transformSource(source);
+    const expected = [
+      {
+        severity: 'error',
+        code: 'SQL_LINE_LIMIT',
+        object: '"APP"."CHILD"',
+        message:
+          'Rendered SQL line 2 is 2401 UTF-8 bytes; the conservative SQL*Plus limit is 2400 bytes.',
+      },
+    ];
+    assert.deepEqual(validateTarget(target), expected);
+    assert.deepEqual(
+      transformationReport(target).filter((d) => d.severity === 'error'),
+      expected,
+    );
+    assert.throws(
+      () => assertValidTarget(target),
+      /SQL_LINE_LIMIT.*2401.*2400/,
+    );
+    assert.throws(() => generateSql(target), /SQL_LINE_LIMIT.*2401.*2400/);
+    assert.deepEqual(validateTarget(target), expected);
+  });
+}
+
+test('preflight measures physical lines rather than complete expressions', () => {
+  const target = transformSource(sourceFixture());
+  target.tables[0].columns[0].defaultExpression = Array.from(
+    { length: 10 },
+    () => "'" + 'x'.repeat(1000) + "'",
+  ).join(' ||\n');
+  assert.deepEqual(validateTarget(target), []);
+  assert.ok(generateSql(target).length > 10000);
+});
+
+test('preflight names views, indexes and constraints and retains other semantic errors', () => {
+  const source = sourceFixture();
+  const view = ordinaryView('LONG_QUERY');
+  view.query = `SELECT '${'x'.repeat(2400)}' FROM DUAL`;
+  source.views = [view];
+  source.targetViews = [view.reference];
+  const target = transformSource(source);
+  const table = target.tables[0];
+  table.indexes.push({
+    ...structuredClone(table.indexes[0]),
+    reference: { owner: 'APP', name: 'LONG_INDEX' },
+    type: 'FUNCTION-BASED NORMAL',
+    unique: false,
+    keys: [
+      { column: null, expression: `'${'x'.repeat(2400)}'`, direction: 'ASC' },
+    ],
+  });
+  table.constraints.push({
+    kind: 'check',
+    name: 'LONG_CHECK',
+    generatedName: false,
+    expression: `ID = '${'x'.repeat(2400)}'`,
+    state: { ...enabledState },
+  });
+  table.unsupportedFeatures.push('unsupported test feature');
+  const diagnostics = validateTarget(target);
+  assert.deepEqual(
+    diagnostics.filter((d) => d.code === 'SQL_LINE_LIMIT').map((d) => d.object),
+    [
+      '"APP"."LONG_INDEX"',
+      '"APP"."CHILD"/LONG_CHECK',
+      '"REPORTING"."LONG_QUERY"',
+    ],
+  );
+  assert.ok(diagnostics.some((d) => d.code === 'UNSUPPORTED_FEATURE'));
+  assert.throws(() => generateSql(target), /SQL_LINE_LIMIT/);
+});
+
+test('preflight accounts for quoted identifier expansion in wide view headers', () => {
+  const source = sourceFixture();
+  const view = ordinaryView('Wide " view');
+  view.columns = Array.from({ length: 20 }, (_, i) => `${i}${'"'.repeat(120)}`);
+  source.views = [view];
+  source.targetViews = [view.reference];
+  const target = transformSource(source);
+  const diagnostics = validateTarget(target);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].code, 'SQL_LINE_LIMIT');
+  assert.equal(diagnostics[0].object, '"REPORTING"."Wide "" view"');
+  assert.throws(() => generateSql(target), /SQL_LINE_LIMIT/);
+});
+
+test('comment preparation retains stable failures and checks bounded dynamic DDL', () => {
+  const target = transformSource(sourceFixture());
+  target.tables[0].comment = 'x'.repeat(2400);
+  target.tables[0].columns[0].comment = "Ω\n'".repeat(800);
+  assert.deepEqual(validateTarget(target), []);
+  assert.ok(
+    generateSql(target)
+      .split('\n')
+      .every((line) => Buffer.byteLength(line) <= 2400),
+  );
+  target.tables[0].comment = 'x'.repeat(32768);
+  target.tables[0].columns[0].comment = '';
+  assert.deepEqual(
+    validateTarget(target).map((d) => [d.code, d.object]),
+    [
+      ['UNRENDERABLE_TABLE_COMMENT', '"APP"."CHILD"'],
+      ['UNRENDERABLE_COLUMN_COMMENT', '"APP"."CHILD".TENANT_ID'],
+    ],
+  );
+  assert.throws(() => generateSql(target), /UNRENDERABLE_TABLE_COMMENT/);
+});
+
+test('invalid index keys produce diagnostics without aborting validation', () => {
+  for (const column of [null, '', 'x'.repeat(129)]) {
+    const target = transformSource(sourceFixture());
+    target.tables[0].indexes[0].keys[0] = {
+      column,
+      expression: null,
+      direction: 'ASC',
+    };
+    assert.ok(
+      validateTarget(target).some((d) => d.code === 'UNRENDERABLE_INDEX_KEY'),
+    );
+    assert.throws(() => generateSql(target), /UNRENDERABLE_INDEX_KEY/);
+  }
+});
+
+test('every public preflight boundary strictly parses unknown input', () => {
+  const target = transformSource(sourceFixture());
+  for (const input of [
+    null,
+    '{',
+    {},
+    { ...target, extra: true },
+    { ...target, tables: [{ ...target.tables[0], columns: null }] },
+  ]) {
+    for (const boundary of [validateTarget, assertValidTarget, generateSql])
+      assert.throws(() => boundary(input));
+    assert.throws(() => transformSource(input));
+  }
+  const before = structuredClone(target);
+  validateTarget(target);
+  assertValidTarget(target);
+  generateSql(target);
+  assert.deepEqual(target, before);
 });

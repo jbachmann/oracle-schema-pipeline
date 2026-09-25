@@ -236,3 +236,76 @@ test('semantic errors still publish a complete reviewable transform bundle', asy
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('renderability failures reach reports and block generation before staging SQL', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const { sourceFixture } = await import('./fixtures.js');
+  const directory = await mkdtemp(join(tmpdir(), 'publication-renderability-'));
+  try {
+    const document = sourceFixture();
+    document.tables[0].columns[0].defaultExpression = `'${'x'.repeat(2400)}'`;
+    await writeFile(join(directory, 'source.json'), JSON.stringify(document));
+    const run = (...args: string[]) =>
+      execute(process.execPath, ['--import', tsx, cli, ...args], {
+        cwd: directory,
+      });
+    await assert.rejects(
+      run('transform', '--input', 'source.json', '--output', 'target.json'),
+      { code: 2 },
+    );
+    const report = JSON.parse(
+      await readFile(join(directory, 'target.json.report.json'), 'utf8'),
+    );
+    const errors = report.filter(
+      (d: { severity: string }) => d.severity === 'error',
+    );
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].code, 'SQL_LINE_LIMIT');
+    await assert.rejects(
+      run('validate', '--input', 'target.json', '--report', 'validation.json'),
+      { code: 2 },
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(join(directory, 'validation.json'), 'utf8')),
+      errors,
+    );
+    // Output-path preflight may create the staging root, but no SQL is staged.
+    await assert.rejects(
+      run(
+        'generate',
+        '--input',
+        'target.json',
+        '--output',
+        'clone.sql',
+        '--temp-dir',
+        'sql-staging',
+      ),
+      (error: unknown) => {
+        assert.equal((error as { code: number }).code, 1);
+        assert.match(
+          (error as { stderr: string }).stderr,
+          /SQL_LINE_LIMIT.*APP.*CHILD.*2400/,
+        );
+        return true;
+      },
+    );
+    const files = await readdir(directory);
+    assert.ok(!files.includes('clone.sql'));
+    assert.deepEqual(await readdir(join(directory, 'sql-staging')), []);
+    await writeFile(join(directory, 'malformed.json'), '{');
+    for (const command of ['transform', 'validate', 'generate'])
+      await assert.rejects(
+        run(
+          command,
+          '--input',
+          'malformed.json',
+          '--output',
+          'malformed-output',
+        ),
+        { code: 1 },
+      );
+    assert.ok(!(await readdir(directory)).includes('malformed-output'));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

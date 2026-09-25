@@ -292,6 +292,21 @@ number precision loss. Source identity sequence defaults are not replayed.
 The declared identity start is reconstructed; this does not copy live next-value
 state, cached values, or table data. Unknown or advanced identity flags block SQL.
 
+Validation and transformation reports also preflight the final rendered SQL lines.
+A physical line above the conservative 2,400-byte SQL*Plus limit produces a
+`SQL_LINE_LIMIT` error naming the table, index, constraint, view, or schema, with
+its operation-local line number and measured UTF-8 byte count. Quoted identifiers,
+DDL prefixes, separators, and multibyte text count toward the limit. Long comments
+still use the existing bounded dynamic DDL renderer; expressions are not rewritten.
+Datatype, identity, and comment rendering failures retain their existing codes;
+unrenderable index keys use `UNRENDERABLE_INDEX_KEY`.
+
+Generation independently parses, validates, and prepares every input before opening
+SQL output files. Transform and validate return exit code 2 for these diagnostics;
+transform still publishes its reviewable target/report bundle. Failed generation
+returns exit code 1. This preflight checks known rendering constraints, not arbitrary
+SQL syntax or destination privileges. Supported models retain identical SQL output.
+
 ## Supported subset and deliberate rejection
 
 Supported: ordinary nonpartitioned heap tables; common Oracle scalar numeric,

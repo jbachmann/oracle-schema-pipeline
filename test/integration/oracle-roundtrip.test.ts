@@ -7,6 +7,7 @@ import { extractSource } from '../../src/extract.js';
 import { transformSource } from '../../src/transform.js';
 import { buildDictionaryWorkbook } from '../../src/dictionary.js';
 import { generateSql } from '../../src/generate.js';
+import { validateTarget } from '../../src/validate.js';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -227,6 +228,18 @@ test(
     const orderedTarget = targetDocumentSchema.parse(
       JSON.parse(await readFile(targetFile, 'utf8')),
     );
+    // The independently extracted catalog model uses the same offline preflight.
+    const overlongTarget = structuredClone(orderedTarget);
+    const defaultColumn = overlongTarget.tables
+      .flatMap((table) => table.columns)
+      .find((column) => !column.virtual && !column.identity)!;
+    defaultColumn.defaultExpression = `'${'x'.repeat(2400)}'`;
+    assert.ok(
+      validateTarget(overlongTarget).some(
+        (diagnostic) => diagnostic.code === 'SQL_LINE_LIMIT',
+      ),
+    );
+    assert.throws(() => generateSql(overlongTarget), /SQL_LINE_LIMIT/);
     const shuffledTarget = structuredClone(orderedTarget);
     shuffledTarget.views.reverse();
     for (const view of shuffledTarget.views) view.dependencies.reverse();
