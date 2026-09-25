@@ -1,112 +1,114 @@
 # Feature: Atomic artifact publication and completion tracking
 
-- Status: Draft request — captured from architecture review; not approved for implementation
+- Status: Implemented
 - Date: 2026-09-24
 - Priority: High
 - Request: Expose only complete artifacts and make multi-file completion unambiguous.
 
 ## Context and Scope
 
-Given concurrent writers or an interrupted write, existing artifacts remain
-unchanged and a final pathname never exposes partially copied contents. Given a
-failed transform report write, consumers can distinguish incomplete output sets.
+Concurrent writers and interrupted writes must preserve existing artifacts and
+never expose partially copied bytes at final pathnames. Failed transform bundles
+must be distinguishable from complete output sets. This applies to the artifact
+writer and every CLI stage, including dictionary. Database transactions and
+replacement of existing artifacts are excluded.
 
-Affected components: artifact writer and CLI across all stages, including dictionary.
-Exclude database transactions and overwriting/replacing existing artifacts.
-
-This request captures the user's authorized review recommendations. Design defaults
-below are proposals, not approved implementation decisions. Implementation has not
-started. Resolve material open questions before promoting this request to Planned.
-
-## Research Findings
-
-Verified: `src/files.ts` fsyncs a partial file then uses COPYFILE_EXCL; this prevents
-overwriting but does not establish atomic publication. `src/cli.ts` writes target
-and report sequentially. The README documents that they are not an atomic pair.
-
-Node explicitly disclaims atomicity of copyFile. Primary source, accessed 2026-09-24:
-[Node filesystem API](https://nodejs.org/download/release/v26.3.0/docs/api/fs.html).
-
-Repository paths refer to the implementation reviewed on 2026-09-24. The review
-passed `npm test` (32 tests) and `npm run typecheck`; live integration was inspected,
-not executed.
+The requester approved default completion manifests at `<output>.complete.json`
+and support for local disks with atomic exclusive hard links, with errors on
+unsupported publication and no portable power-loss durability guarantee.
 
 ## Decisions and Boundaries
 
-Preserve no-overwrite semantics and existing artifact payload formats. Proposed
-default: stage in a configurable temporary directory, defaulting to a location
-within the CLI's current working directory, and publish with an exclusive
-atomic operation; do not silently fall back to copying. A completion manifest is
-proposed for multi-artifact output, not a claim that separate pathnames become one
-filesystem transaction. Filesystem support and manifest rollout remain open.
-The staging directory must be on the same filesystem as each destination it serves;
-reject incompatible locations before writing artifacts.
+The implementation is specified in [ADR 0005](../adr/0005-atomic-artifact-publication.md).
 
-Preserve read-only extraction, offline transform/validate/generate, trusted SQL
-fragment boundaries, independent generation validation, deterministic ordering,
-non-overwriting artifacts, and secret exclusion. Invariant exceptions: none proposed.
+- All writing commands accept `--temp-dir`. Relative paths resolve against the
+  invoking working directory. The default is `.oracle-schema-tmp` there.
+- Preflight every destination, including transform report and completion paths,
+  against existing files, aliases, and the staging filesystem device. Reject
+  incompatible staging with `OUTPUT_PUBLICATION_UNSUPPORTED` and `--temp-dir`
+  guidance before staging any artifact bytes. Never switch staging or copy.
+- Use private unique `publication-*` directories and exclusive mode-0600 staged
+  files. Synchronize and close every bundle member before linking any final path.
+- Publish with exclusive hard links on local filesystems that provide atomic
+  linking. Existing paths are never replaced, including during races. Case and
+  Unicode-normalization variants in one directory are conservatively rejected.
+  Parent directories must remain stable and trusted during the operation.
+- Attempt destination-directory sync after each link. A sync warning records
+  reduced durability without claiming a committed file is absent. This protocol
+  guarantees visibility, not survival of power loss on every platform.
+- Clean up only the invocation's own temporary directory. Cleanup warnings preserve
+  committed outcomes. Killed writers can leave temporary files; retries ignore
+  those files. Remove stale directories only after their process has stopped, and
+  never edit staged files that might share an inode with a published artifact.
+- Transform publishes target, report, then a default completion manifest. Use
+  `--report` and `--completion` to customize paths. The version-1 manifest contains
+  ordered roles, canonical absolute paths, byte lengths, and SHA-256 hashes. Its
+  version is independent of model formatVersion. A complete bundle can contain
+  semantic errors and still exits 2; I/O failures exit 1.
+- Failure after a published subset reports `OUTPUT_INCOMPLETE` and publishes no
+  manifest for that bundle. Use fresh target, report, and completion paths on retry.
+  This is completion tracking, not a multi-path filesystem transaction.
+- `verifyCompletion` validates the expected roles and paths and the actual bytes;
+  the clone workflow uses it before consuming the transform result. Independent
+  validate/generate remain compatible with existing individual model files.
 
-## Proposed Design
+Read-only extraction, offline downstream stages, trusted SQL fragments, independent
+generation validation, deterministic payloads, and secret exclusion are unchanged.
+No source/target payload schema or generated SQL changes are introduced.
 
-Make the temporary-file directory configurable. When not configured, use a
-dedicated temporary subdirectory within the current working directory from which
-the CLI is invoked. Resolve relative configured paths against that working
-directory. The exact CLI option and default subdirectory name remain to be defined.
-Preflight that staging and destination locations share a filesystem; if they do
-not, fail with an actionable diagnostic directing the user to configure a
-compatible temporary directory. Do not fall back to copying or silently select a
-different staging location.
+## Implementation
 
-Use a completed, synchronized temporary file and a tested exclusive publication
-primitive, such as a same-filesystem hard link where supported. Specify directory
-synchronization, temporary-file ownership, cleanup, and post-publication cleanup
-failure separately. A cleanup failure must not misreport a committed file as absent.
+1. `src/files.ts`: staging configuration, destination preflight, synchronized
+   exclusive publication, bundle manifests, committed-state warnings, and cleanup.
+2. `src/cli.ts`: preflight all stage outputs and coordinate transform publication.
+3. `src/completion.ts`: strict manifest and expected artifact verification.
+4. `scripts/clone-compose-database.ts`: verify the complete transform bundle before
+   validation/generation.
+5. README and ADR 0005: supported storage, compatibility, manifest consumption,
+   synchronization limits, retry, and cleanup guidance.
 
-Preflight all destinations, including report and completion paths; reject aliases
-that resolve to the same output. Keep final exclusive publication as the race guard.
-Proposed manifest fields: version, artifact roles, paths, byte lengths, and content
-hashes. Publish it last. Its schema is independent of source/target formatVersion.
-Proposed error codes: OUTPUT_EXISTS, OUTPUT_PATH_CONFLICT,
-OUTPUT_PUBLICATION_UNSUPPORTED, OUTPUT_INCOMPLETE.
+## Validation Evidence
 
-## Implementation Plan
-
-1. Define supported filesystems, temporary-directory configuration and default
-   subdirectory name, and completion-manifest interface.
-2. Add fault-injection and concurrency cases in `test/files.test.ts`.
-3. Replace copying in `src/files.ts` with the selected publication protocol.
-4. Add multi-output coordination and destination preflight in `src/cli.ts`.
-5. Update README recovery guidance and consumers that require complete output sets.
-
-## Test Plan
-
-Verify bytes for JSON, SQL, and XLSX; existing destination preservation; competing
-writers; interrupted staging/publication; stale temporary files; unsupported link
-operations; cleanup errors; report failure; path aliases; and absent completion
-manifest for every incomplete bundle. Verify the working-directory default,
-absolute and relative configured temporary directories, and rejection of staging
-locations on a different filesystem from their destinations. Distinguish crash
-durability from visibility.
-
-Run `npm test` and `npm run typecheck`. Run `npm run build` for module/interface
-changes. Catalog or generated-SQL changes also require `npm run test:integration`
-against disposable Oracle services.
+- `test/files.test.ts`: Unicode JSON and binary byte preservation; complete SQL
+  under competing writers; staging failure; unsupported links; cleanup failure;
+  symlink, case and Unicode aliases; cross-device preflight; last-manifest ordering
+  and exact hashes; failures at every publication position; pre-existing report
+  and completion preservation; directory-sync warnings; real SIGKILL during
+  staging and publication; stale-directory ownership and successful retries.
+- `test/publication-cli.test.ts`: default/relative/absolute staging from the
+  invoking directory; readable XLSX files; default/custom transform manifests;
+  generated SQL byte equality; existing/aliased report and completion preflight;
+  semantic-error bundles, validation reports, and independent SQL rejection.
+- `test/completion.test.ts`: reject missing manifests/artifacts and mismatched
+  versions, roles, paths, lengths, hashes, and member counts.
+- `npm test`: 120 tests pass, including existing pipeline invariant coverage.
+- `npm run typecheck` and `npm run build`: pass.
+- `git diff --check`: pass.
+- Oracle integration is not required for this change: catalog access and generated
+  SQL semantics are unchanged. The database clone workflow's verification call is
+  typechecked; no live clone was executed.
 
 ## Acceptance Criteria
 
-- [ ] A reader never observes partial contents at a published final pathname.
-- [ ] Existing output cannot be replaced, including during races.
-- [ ] Temporary-file location is configurable and defaults to a subdirectory of
+- [x] A reader never observes partial contents at a published final pathname.
+- [x] Existing output cannot be replaced, including during races.
+- [x] Temporary-file location is configurable and defaults to a subdirectory of
       the CLI's current working directory.
-- [ ] Staging locations on a different filesystem from their destinations are
+- [x] Staging locations on a different filesystem from their destinations are
       rejected before writing artifacts, with configuration guidance.
-- [ ] Failed bundles never receive a completion manifest.
-- [ ] Retry and cleanup behavior is documented and tested.
-- [ ] Existing pipeline invariants and stated compatibility behavior remain covered.
-- [ ] README and relevant architecture decisions describe the final behavior.
+- [x] Failed bundles never receive a completion manifest.
+- [x] Retry and cleanup behavior is documented and tested.
+- [x] Existing pipeline invariants and stated compatibility behavior remain covered.
+- [x] README and relevant architecture decisions describe the final behavior.
 
-## Risks and Open Questions
+## Verification Limits
 
-Approve supported filesystem/platform scope and whether manifests are opt-in or
-default before finalizing the CLI contract. Hard-link and directory-sync behavior
-needs platform-specific verification; atomic visibility alone is not power-loss durability.
+Local macOS execution verifies the hard-link and directory-sync protocol in this
+environment. Network filesystems are outside the guarantee; other deployments must
+verify their filesystem semantics. Cross-device and unsupported-operation rejection
+are tested through injected filesystem boundaries. Process termination tests do
+not simulate hardware failure or establish power-loss durability.
+
+Node's [filesystem API](https://nodejs.org/api/fs.html#fspromiseslinkexistingpath-newpath)
+provides hard-link creation. The previous copying implementation prevented
+replacement but did not provide the required atomic publication guarantee.

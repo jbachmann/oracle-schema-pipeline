@@ -320,8 +320,10 @@ The object-selection document remains version 2.
 ## Diagnostics and file behavior
 
 `transform` writes both target JSON and `<output>.report.json`; use `--report` to
-choose another report path. The report includes deliberate changes plus validation
-errors/warnings. It exits with status 2 for semantic errors but retains the files
+choose another report path. A completion manifest is written last to
+`<output>.complete.json`; use `--completion` to choose another path. All three
+paths are preflighted before processing. The report includes deliberate changes
+plus validation errors/warnings. It exits with status 2 for semantic errors but retains the files
 for review. Correct the policy, model, or implementation and rerun to new filenames.
 
 `validate` prints diagnostics and optionally writes `--report`. It exits 2 on
@@ -329,10 +331,60 @@ semantic errors. Malformed files/command failures exit 1. `generate` validates a
 and writes no SQL if validation fails (exit 1). This distinction separates a
 reviewable transformation result from an unsuccessful generation command.
 
-Writes use a `.partial` file then a non-overwriting copy. An interrupted write or
-failed final copy may leave the partial file; use a new path on retry. The two
-transform artifacts are not an atomic pair: if writing the report fails, the target
-may already exist. No existing artifact is overwritten.
+A complete transform bundle has a manifest with independent `version: 1` and an
+ordered `artifacts` array (target, report). Each entry contains `role`, canonical
+absolute `path`, `bytes`, and lowercase hex `sha256`. Model `formatVersion` and
+JSON/SQL/XLSX payloads are unchanged. Completion means publication succeeded,
+not that the model is semantically valid: exit 2 still produces a complete bundle.
+
+Consumers requiring both target and report must require the manifest and verify
+its roles, paths, byte lengths, and SHA-256 hashes against their expected files.
+`verifyCompletion` in `src/completion.ts` performs this check; the clone workflow
+uses it before validation and generation. Standalone validate/generate still accept
+existing model files without a manifest and independently validate their input.
+
+The separate final pathnames are not a filesystem transaction. All bundle bytes
+are staged before any final file appears, but publication can stop after a subset.
+`OUTPUT_INCOMPLETE` reports a failure after one or more bundle files were published;
+no completion manifest is published for that failed bundle. Earlier failures can
+report `OUTPUT_EXISTS`, `OUTPUT_PUBLICATION_UNSUPPORTED`, or an I/O error. Keep
+complete files for inspection and retry with fresh target, report, and manifest
+paths. Never infer bundle completion from the target file alone.
+
+Supported storage is a local filesystem providing atomic, exclusive hard links.
+Network and other filesystems without those semantics are outside the guarantee;
+unsupported link operations fail closed. This has been exercised on the local
+macOS filesystem; other platforms need deployment-specific verification.
+
+All file-writing commands accept `--temp-dir`. It defaults to
+`.oracle-schema-tmp` under the CLI's current working directory; relative configured
+paths also resolve there. Destination parent directories must already exist.
+Staging and every destination must share a filesystem; otherwise the command
+fails with `OUTPUT_PUBLICATION_UNSUPPORTED` and configuration guidance before
+staging artifact bytes. No copying fallback or alternate staging location is used.
+
+The writer creates a private, unique `publication-*` staging directory, writes each
+file with mode `0600`, synchronizes and closes it, then publishes with an exclusive
+hard link. Readers see complete bytes at each final pathname. Existing files,
+including dangling symlinks, are rejected with `OUTPUT_EXISTS`; destination aliases
+are rejected with `OUTPUT_PATH_CONFLICT`. Names differing only by case or Unicode
+normalization in the same directory are conservatively treated as conflicts even
+on case-sensitive disks. Final exclusive publication guards against competing writers after preflight. Output directories must remain stable
+and trusted during publication.
+
+File synchronization precedes publication. Destination directory synchronization
+is attempted after each link. `OUTPUT_DURABILITY_WARNING` means the file is
+published but directory synchronization failed; atomic visibility does not promise
+survival of a power loss. `OUTPUT_CLEANUP_WARNING` also preserves the committed
+outcome. Neither warning means a published file is absent.
+
+Normal success and failure remove only the current invocation's staging directory.
+A killed process may leave its unique directory behind; stale directories never
+block retries and are never automatically adopted or deleted by another invocation.
+After verifying the owner process has stopped, remove its staging directory.
+Never edit staged files: a leftover staged file can share an inode with a published
+artifact. Use new output names when retrying after any final artifact was published.
+No existing artifact is overwritten.
 
 ## Readable code organization
 
@@ -345,7 +397,8 @@ may already exist. No existing artifact is overwritten.
 | `validate.ts`             | Cross-object references and supported-feature checks              |
 | `types.ts`, `identity.ts` | Focused datatype and identity rendering                           |
 | `generate.ts`             | Ordered SQL generation from a validated model                     |
-| `files.ts`                | Non-overwriting UTF-8 artifact writes                             |
+| `files.ts`                | Atomic artifact and bundle publication                             |
+| `completion.ts`          | Completion manifest and artifact verification                     |
 | `cli.ts`, `password.ts`   | Commands and source connection credentials                        |
 
 To extend support, first add/capture the required model facts, then add target

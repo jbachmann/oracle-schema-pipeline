@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.partial
 artifacts/
+
+.oracle-schema-tmp/

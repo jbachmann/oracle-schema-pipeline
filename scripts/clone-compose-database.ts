@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import oracle from 'oracledb';
+import { verifyCompletion } from '../src/completion.js';
 
 const schemas = ['IAM', 'CATALOG', 'COMMERCE', 'FINANCE'];
 const selectedViews = [
@@ -205,6 +206,10 @@ async function main(): Promise<void> {
     targetFile,
     '--report',
     reportFile,
+  ]);
+  await verifyCompletion(`${targetFile}.complete.json`, [
+    { role: 'target', path: targetFile },
+    { role: 'report', path: reportFile },
   ]);
   await pipeline(['validate', '--input', targetFile]);
   await pipeline(['generate', '--input', targetFile, '--output', sqlFile]);

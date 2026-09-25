@@ -1,4 +1,4 @@
-import { readFile, access } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import {
   sourceDocumentSchema,
@@ -9,7 +9,14 @@ import {
 import { transformSource, transformationReport } from './transform.js';
 import { validateTarget } from './validate.js';
 import { generateSql } from './generate.js';
-import { writeJson, writeNewBuffer, writeNewFile } from './files.js';
+import {
+  preflightOutputs,
+  publishArtifacts,
+  jsonBytes,
+  writeJson,
+  writeNewBuffer,
+  writeNewFile,
+} from './files.js';
 import { resolveConnectionOptions } from './connection.js';
 
 async function readJson(path: string): Promise<unknown> {
@@ -34,6 +41,8 @@ async function main(): Promise<void> {
       output: { type: 'string' },
       policy: { type: 'string' },
       report: { type: 'string' },
+      'temp-dir': { type: 'string' },
+      completion: { type: 'string' },
     },
   });
   if (values.help || !positionals.length) {
@@ -50,6 +59,8 @@ Only extract connects to Oracle. Catalog scope: all (default) or dba.
 Connection arguments may be visible to local processes; never include passwords.
 Password: hidden prompt or ORACLE_PASSWORD.
 Transform also writes <output>.report.json unless --report is supplied.
+Transform publishes <output>.complete.json last; use --completion to choose its path.
+All file outputs accept --temp-dir (default: .oracle-schema-tmp under the current working directory).
 Validation errors use exit code 2; unsupported models never produce SQL.`);
     return;
   }
@@ -61,15 +72,29 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
     )
   )
     throw new Error(`Unknown command: ${command}`);
-  if (command !== 'validate') {
-    const output = requireOption(values.output, 'output');
-    try {
-      await access(output);
-      throw new Error(`Output exists: ${output}`);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-  }
+  if (values.completion !== undefined && command !== 'transform')
+    throw new Error('--completion is only supported by transform.');
+  const completion =
+    command === 'transform'
+      ? requireOption(
+          values.completion ?? `${values.output}.complete.json`,
+          'completion',
+        )
+      : undefined;
+  const publicationOptions = { tempDir: values['temp-dir'] };
+  const outputPaths =
+    command === 'validate'
+      ? values.report
+        ? [values.report]
+        : []
+      : [requireOption(values.output, 'output')];
+  if (command === 'transform')
+    outputPaths.push(
+      values.report ?? `${values.output}.report.json`,
+      completion!,
+    );
+  if (outputPaths.length)
+    await preflightOutputs(outputPaths, publicationOptions);
   if (command === 'extract') {
     const scope = values['catalog-scope'] ?? 'all';
     if (scope !== 'all' && scope !== 'dba')
@@ -105,7 +130,7 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
         new OracleCatalog(connection, scope),
         selection,
       );
-      await writeJson(values.output!, source);
+      await writeJson(values.output!, source, publicationOptions);
       console.log(
         `Extracted ${source.tables.length} table definitions to ${values.output}.`,
       );
@@ -117,7 +142,11 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
       await readJson(requireOption(values.input, 'input')),
     );
     const { createDictionaryBuffer } = await import('./dictionary.js');
-    await writeNewBuffer(values.output!, await createDictionaryBuffer(source));
+    await writeNewBuffer(
+      values.output!,
+      await createDictionaryBuffer(source),
+      publicationOptions,
+    );
     console.log(`Wrote ${values.output}.`);
   } else if (command === 'transform') {
     const source = sourceDocumentSchema.parse(
@@ -128,11 +157,21 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
     );
     const target = transformSource(source, policy);
     const report = transformationReport(target);
-    await writeJson(values.output!, target);
-    await writeJson(values.report ?? `${values.output}.report.json`, report);
+    await publishArtifacts(
+      [
+        { role: 'target', path: values.output!, contents: jsonBytes(target) },
+        {
+          role: 'report',
+          path: values.report ?? `${values.output}.report.json`,
+          contents: jsonBytes(report),
+        },
+      ],
+      completion,
+      publicationOptions,
+    );
     const errors = report.filter((item) => item.severity === 'error');
     console.log(
-      `Wrote target model and change/validation report; ${errors.length} blocking errors.`,
+      `Wrote target model, change/validation report, and completion manifest; ${errors.length} blocking errors.`,
     );
     if (errors.length) process.exitCode = 2;
   } else {
@@ -141,13 +180,14 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
     );
     if (command === 'validate') {
       const diagnostics = validateTarget(target);
-      if (values.report) await writeJson(values.report, diagnostics);
+      if (values.report)
+        await writeJson(values.report, diagnostics, publicationOptions);
       console.log(JSON.stringify(diagnostics, null, 2));
       if (diagnostics.some((item) => item.severity === 'error'))
         process.exitCode = 2;
     } else {
       const sql = generateSql(target); // Validates again; skipping validate is safe.
-      await writeNewFile(values.output!, sql);
+      await writeNewFile(values.output!, sql, publicationOptions);
       console.log(`Wrote ${values.output}.`);
     }
   }
