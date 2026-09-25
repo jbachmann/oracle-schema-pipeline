@@ -326,6 +326,40 @@ CREATE VIEW open_order_finance (order_id, order_number, line_count, merchandise_
     LEFT JOIN invoices i ON i.order_id = o.order_id
   WITH READ ONLY;
 
+-- Boundary values are part of the ordinary reconstruction, without adding tables.
+ALTER TABLE IAM.permissions ADD (
+  literal_probe VARCHAR2(80 CHAR) DEFAULT 'it''s  (exact)',
+  rounded_probe NUMBER(8,-2) DEFAULT 12345,
+  byte_probe VARCHAR2(17 BYTE),
+  char_probe VARCHAR2(17 CHAR)
+);
+
+-- Integration-test accounts for this disposable example database only.
+-- Real extraction uses an existing supplied account; it never runs this seed,
+-- creates these users, requires proxy authentication, or changes source grants.
+-- Passwordless proxy targets: authentication uses the existing SYSTEM secret,
+-- but catalog visibility and privileges belong to the restricted session user.
+CREATE USER SCHEMA_READER NO AUTHENTICATION;
+CREATE USER LIMITED_READER NO AUTHENTICATION;
+GRANT CREATE SESSION TO SCHEMA_READER, LIMITED_READER;
+ALTER USER SCHEMA_READER GRANT CONNECT THROUGH SYSTEM;
+ALTER USER LIMITED_READER GRANT CONNECT THROUGH SYSTEM;
+BEGIN
+  FOR item IN (
+    SELECT owner, object_name FROM dba_objects
+    WHERE owner IN ('IAM','CATALOG','COMMERCE','FINANCE')
+      AND object_type IN ('TABLE','VIEW')
+  ) LOOP
+    EXECUTE IMMEDIATE 'GRANT SELECT ON ' ||
+      DBMS_ASSERT.ENQUOTE_NAME(item.owner, FALSE) || '.' ||
+      DBMS_ASSERT.ENQUOTE_NAME(item.object_name, FALSE) || ' TO SCHEMA_READER';
+  END LOOP;
+END;
+/
+-- The child and view are visible, but their required definitions are not.
+GRANT SELECT ON IAM.org_units TO LIMITED_READER;
+GRANT SELECT ON COMMERCE.open_orders TO LIMITED_READER;
+
 -- This is deliberately last. Startup and health checks use it as an atomic
 -- indication that every table, grant, index, and foreign key was created.
 CREATE SEQUENCE IAM.source_seed_complete START WITH 1 NOCACHE;

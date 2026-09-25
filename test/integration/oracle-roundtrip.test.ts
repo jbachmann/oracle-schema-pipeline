@@ -1,19 +1,22 @@
+import {
+  assertIndependentFacts,
+  assertDestinationBehavior,
+} from './independent-facts.js';
 import { OracleCatalog } from '../../src/catalog.js';
 import { extractSource } from '../../src/extract.js';
 import { transformSource } from '../../src/transform.js';
 import { buildDictionaryWorkbook } from '../../src/dictionary.js';
 import { generateSql } from '../../src/generate.js';
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import oracle from 'oracledb';
 import { targetDocumentSchema, type TargetDocument } from '../../src/model.js';
 
-const exec = promisify(execFile);
+import { comparableExpression as normalizeExpression } from '../helpers/sql-comparison.js';
 const schemas = ['IAM', 'CATALOG', 'COMMERCE', 'FINANCE'];
 const selectedViews = [
   { owner: 'FINANCE', name: 'OPEN_ORDER_FINANCE' },
@@ -118,26 +121,6 @@ async function selectedTables(
   }
 }
 
-function normalizeExpression(value: string | null): string | null {
-  if (value === null) return null;
-  let normalized = value.trim().replace(/\s+/gu, ' ');
-  while (normalized.startsWith('(') && normalized.endsWith(')')) {
-    let depth = 0,
-      wraps = true;
-    for (let index = 0; index < normalized.length; index++) {
-      if (normalized[index] === '(') depth++;
-      else if (normalized[index] === ')') depth--;
-      if (depth === 0 && index < normalized.length - 1) {
-        wraps = false;
-        break;
-      }
-    }
-    if (!wraps) break;
-    normalized = normalized.slice(1, -1).trim();
-  }
-  return normalized;
-}
-
 /** Remove extraction-time and intentionally policy-dependent facts only. */
 function comparable(document: TargetDocument): unknown {
   return document.tables
@@ -210,6 +193,7 @@ test(
     const replayFile = join(directory, 'replayed-source.json');
     const replayTargetFile = join(directory, 'replayed-target.json');
 
+    await assertIndependentFacts(sourceDsn, password);
     const tables = await selectedTables(sourceDsn);
     assert.equal(
       tables.length,
@@ -226,10 +210,8 @@ test(
         'extract',
         '--dsn',
         sourceDsn,
-        '--catalog-scope',
-        'dba',
         '--user',
-        'SYSTEM',
+        'SYSTEM[SCHEMA_READER]',
         '--objects',
         tableFile,
         '--output',
@@ -302,6 +284,9 @@ test(
       ['transform', '--input', replayFile, '--output', replayTargetFile],
       directory,
     );
+
+    await assertIndependentFacts(destinationDsn, password);
+    await assertDestinationBehavior(destinationDsn, password);
 
     const expected = targetDocumentSchema.parse(
       JSON.parse(await readFile(targetFile, 'utf8')),
@@ -464,3 +449,63 @@ test(
     }
   },
 );
+
+test('restricted ALL catalog sessions have only explicit grants and reject hidden dependencies', async () => {
+  const connectString =
+    process.env.ORACLE_SOURCE_DSN ?? (await publishedDsn('oracle-source'));
+  for (const user of ['SCHEMA_READER', 'LIMITED_READER']) {
+    const connection = await oracle.getConnection({
+      user: `SYSTEM[${user}]`,
+      password,
+      connectString,
+    });
+    try {
+      const rows = async (sql: string) =>
+        (
+          await connection.execute(
+            sql,
+            {},
+            {
+              outFormat: oracle.OUT_FORMAT_ARRAY,
+            },
+          )
+        ).rows;
+      assert.deepEqual(
+        await rows('SELECT privilege FROM session_privs ORDER BY privilege'),
+        [['CREATE SESSION']],
+      );
+      assert.deepEqual(await rows('SELECT role FROM session_roles'), []);
+      assert.deepEqual(
+        await rows(
+          'SELECT DISTINCT privilege FROM user_tab_privs WHERE grantee=USER',
+        ),
+        [['SELECT']],
+      );
+      await assert.rejects(
+        connection.execute('SELECT COUNT(*) FROM dba_tables'),
+        /ORA-00942/,
+      );
+      if (user === 'LIMITED_READER') {
+        const catalog = new OracleCatalog(connection);
+        await assert.rejects(
+          extractSource(catalog, {
+            version: 2,
+            tables: [{ owner: 'IAM', name: 'ORG_UNITS' }],
+            views: [],
+          }),
+          /CATALOG_(?:INCOMPLETE_METADATA|CARDINALITY)/,
+        );
+        await assert.rejects(
+          extractSource(catalog, {
+            version: 2,
+            tables: [],
+            views: [{ owner: 'COMMERCE', name: 'OPEN_ORDERS' }],
+          }),
+          /CATALOG_(?:INCOMPLETE_METADATA|CARDINALITY)/,
+        );
+      }
+    } finally {
+      await connection.close();
+    }
+  }
+});

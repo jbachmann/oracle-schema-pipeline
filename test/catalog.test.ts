@@ -543,3 +543,32 @@ test('catalog does not truncate paged constraint rows and caches only decoded re
   assert.equal(calls, 2);
   assert.equal(closed, 2);
 });
+
+test('full LONG view text preserves literal whitespace and quote boundaries', async () => {
+  const query = `SELECT 'it''s  (exact)' AS VALUE FROM DUAL /*${' long text '.repeat(5000)}*/`;
+  const connection = viewConnection('N', [], (sql, rows) => {
+    if (sql.includes('FROM all_views')) rows[0].TEXT = query;
+    return rows;
+  });
+  assert.equal(
+    (await new OracleCatalog(connection).view(reference)).query,
+    query,
+  );
+});
+
+test('default ALL scope never falls back to DBA when metadata is inaccessible', async () => {
+  const statements: string[] = [];
+  const connection = {
+    async execute(sql: string) {
+      statements.push(sql);
+      throw new Error('ORA-00942: table or view does not exist');
+    },
+  } as unknown as Connection;
+  await assert.rejects(
+    new OracleCatalog(connection).view(reference),
+    /ORA-00942/,
+  );
+  assert.equal(statements.length, 1);
+  assert.ok(statements[0].includes('FROM all_views'));
+  assert.ok(!statements[0].includes('dba_'));
+});

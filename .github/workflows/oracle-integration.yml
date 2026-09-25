@@ -1,0 +1,28 @@
+name: Disposable Oracle integration
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  oracle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Provision disposable databases
+        run: docker compose up -d --wait --wait-timeout 1200
+      - name: Verify reconstruction
+        run: npm run test:integration
+        env:
+          ORACLE_INTEGRATION_USE_EXISTING: '1'
+      - name: Service status
+        if: failure()
+        run: docker compose ps -a
+      - name: Remove disposable databases
+        if: always()
+        run: docker compose down --volumes

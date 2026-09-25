@@ -600,3 +600,83 @@ test('v4 view text owns restriction syntax and v3 requires re-extraction', () =>
     );
   }
 });
+
+test('view extraction visits diamond dependencies once and stops at base tables', async () => {
+  const views = ['ROOT', 'LEFT', 'RIGHT', 'BASE'].map(ordinaryView);
+  const edge = (index: number) => ({
+    reference: views[index].reference,
+    type: 'VIEW',
+    databaseLink: null,
+  });
+  views[0].dependencies = [edge(1), edge(2), edge(1)];
+  views[1].dependencies = [edge(3)];
+  views[2].dependencies = [edge(3)];
+  const table = ordinaryTable('APP', 'BASE_TABLE');
+  table.constraints.push(fk('UNFOLLOWED', { owner: 'OTHER', name: 'HIDDEN' }));
+  views[3].dependencies = [
+    { reference: table.reference, type: 'TABLE', databaseLink: null },
+  ];
+  const visits: string[] = [];
+  const catalog: SourceCatalog = {
+    async databaseVersion() {
+      return '23';
+    },
+    async foreignKeys() {
+      throw new Error('View-only extraction must not traverse table FKs');
+    },
+    async table(reference) {
+      assert.deepEqual(reference, table.reference);
+      return structuredClone(table);
+    },
+    async prerequisites() {
+      return [];
+    },
+    async view(reference) {
+      visits.push(reference.name);
+      return structuredClone(
+        views.find((view) => view.reference.name === reference.name)!,
+      );
+    },
+    async viewDependencies(reference) {
+      return structuredClone(
+        views.find((view) => view.reference.name === reference.name)!
+          .dependencies,
+      );
+    },
+  };
+  const selection = {
+    version: 2 as const,
+    tables: [],
+    views: [views[0].reference],
+  };
+  const source = await extractSource(catalog, selection);
+  assert.deepEqual(visits.sort(), ['BASE', 'LEFT', 'RIGHT', 'ROOT']);
+  assert.equal(source.tables[0].role, 'view-dependency');
+  assert.deepEqual(validateTarget(transformSource(source)), []);
+  // Cycles terminate extraction, but cannot be reconstructed as conventional views.
+  views[3].dependencies = [edge(0)];
+  visits.length = 0;
+  const cyclic = await extractSource(catalog, selection);
+  assert.equal(visits.length, 4);
+  assert.throws(
+    () => generateSql(transformSource(cyclic)),
+    /VIEW_DEPENDENCY_CYCLE/,
+  );
+});
+
+test('table FK cycles remain valid when both tables are explicit targets', () => {
+  const source = sourceFixture();
+  const [child, parent] = source.tables;
+  parent.role = 'target';
+  source.targetTables.push(parent.reference);
+  parent.constraints = parent.constraints.filter(
+    (item) => item.kind !== 'foreign-key',
+  );
+  parent.constraints.push(fk('FK_PARENT_CHILD', child.reference));
+  const target = transformSource(source);
+  assert.deepEqual(validateTarget(target), []);
+  const sql = generateSql(target);
+  assert.equal((sql.match(/FOREIGN KEY/g) ?? []).length, 2);
+  assert.ok(sql.lastIndexOf('CREATE TABLE') < sql.indexOf('FOREIGN KEY'));
+  assert.ok(sql.lastIndexOf('PRIMARY KEY') < sql.indexOf('FOREIGN KEY'));
+});

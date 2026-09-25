@@ -110,20 +110,31 @@ npm run schema -- extract \
   --output source.json
 ```
 
-Extraction defaults to `--catalog-scope all`. It queries only `ALL_*` views and
-supports a normally authenticated account with `CREATE SESSION` plus ordinary
-object privileges for every selected object and one-hop dependency. Metadata
-hidden from that account fails with a `Missing or inaccessible` error; extraction
-does not silently omit it or fall back to administrative views.
+Use the existing credentials supplied by your database administrator. The utility
+does not require a particular username, role, proxy login, or fixture account, and
+never creates source users or changes their privileges. Do not run the Docker seed
+SQL against an existing database; it only provisions the disposable example database.
 
-For database-wide visibility, use an account with the required dictionary grants
-and select the administrative family explicitly:
+Extraction defaults to `--catalog-scope all`. It queries only `ALL_*` views using
+the supplied account's existing visibility. Required metadata hidden from that
+account causes extraction to fail rather than silently omit it. The utility does
+not automatically detect catalog access or retry with another scope.
+
+If you do not know which scope will work, start with the default. If it fails
+because required metadata is inaccessible, retry with `--catalog-scope dba` using
+the **same supplied credentials**. This attempts dictionary reads with the access
+the account already has; it does not elevate privileges or switch users:
 
 ```bash
 npm run schema -- extract --dsn source-host:1521/SOURCEPDB \
-  --catalog-scope dba --user EXPORT_ADMIN \
+  --catalog-scope dba --user EXPORT_READER \
   --objects objects.json --output source.json
 ```
+
+If neither scope exposes the required metadata, the utility cannot reconstruct
+those selected objects completely and reports failure without publishing a source
+document. This does not imply that you can obtain additional grants. Other errors,
+such as unsupported metadata, are not resolved by switching catalog scope.
 
 `--dsn` accepts either an Easy Connect string or a complete Oracle Connect
 Descriptor. Quote descriptors so the shell passes them as one argument. Never put
@@ -554,3 +565,56 @@ recover facts omitted by the old exporter. Object-selection version 2 and policy
 version 1 are unchanged. Live restriction coverage is Oracle AI Database Free
 23.26.3.0.0; the stricter adapter is not yet integration-certified on older Oracle
 versions. See [ADR 0004](docs/adr/0004-strict-catalog-decoding.md).
+
+### Independent reconstruction verification and CI
+
+The round trip retains model equality and checks both databases against fixed
+expectations from the seed DDL: datatype parameters, character semantics, ordered
+keys, exact comments/default literals, view restrictions, required grants, and
+object validity. Destination-only inserts and updates check numeric rounding,
+literal defaults, and read-only/check-option enforcement, then roll back. Source
+verification and extraction issue only reads. SQL comparison preserves quoted
+text (including repeated spaces, escaped quotes, and parentheses); only whitespace
+between tokens and enclosing expression parentheses are ignored.
+
+Only the disposable integration suite extracts as `SYSTEM[SCHEMA_READER]` using
+default `ALL_*` scope. This is
+Oracle proxy authentication: the existing environment-supplied SYSTEM password
+authenticates the connection, while the session has the reader's `CREATE SESSION`
+and explicit object `SELECT` grants only. Neither reader has roles or catalog-wide
+privileges. `LIMITED_READER` can see a child table and a view but cannot see their
+required dependencies; both extraction requests must fail. No reader passwords
+are stored in fixtures. Destination extraction still exercises explicit DBA scope.
+These accounts model sufficient and insufficient visibility for tests; their names,
+proxy authentication, and exact grants are not requirements for real source accounts.
+The production CLI always uses the supplied `--user` and existing privileges.
+
+Existing source volumes created before these fixtures must be recreated for the
+suite. For a **disposable Compose pair only**, the reproducible clean run is:
+
+```bash
+npm ci
+npm run typecheck
+npm run build
+npm test
+docker compose down --volumes
+docker compose up -d --wait --wait-timeout 1200
+ORACLE_INTEGRATION_USE_EXISTING=1 npm run test:integration
+docker compose down --volumes
+```
+
+GitHub Actions runs `Offline checks` on pushes and pull requests. Configure that
+job as a required branch-protection check in repository settings; workflow files
+alone cannot enforce branch protection. `Disposable Oracle integration` is a
+manual workflow for catalog, generation, and fixture changes. It provisions fresh
+Compose volumes and removes them even after failures; it is not a required PR
+check or scheduled job. Workflows use read-only repository permissions and Node
+22 ([GitHub workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)).
+The Oracle job needs Docker Compose, access to the Oracle container registry,
+enough disk for two database volumes and the image, and enough RAM for two Oracle
+Free instances (allow 16 GiB for the runner). The workflow uses `ubuntu-24.04`;
+select a larger runner if the repository's hosted-runner allocation is smaller.
+The Compose image remains `latest`, so record the tested database version when
+reporting results; this is reproducible provisioning, not an image-version pin.
+No production DSNs or credentials are configured in CI, and database logs/artifacts
+are not uploaded because they can contain credentials or source metadata.

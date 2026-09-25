@@ -1,6 +1,6 @@
 # Feature: Independent reconstruction verification
 
-- Status: Draft request — captured from architecture review; not approved for implementation
+- Status: Implemented — verification results below
 - Date: 2026-09-24
 - Priority: High
 - Request: Detect fidelity regressions even when extraction repeats the same mistake.
@@ -14,9 +14,8 @@ The default ALL_* extraction path is exercised with a restricted source account.
 Affected components: unit tests, Oracle integration fixtures, and CI. Exclude
 production source mutations and expansion of supported schema features.
 
-This request captures the user's authorized review recommendations. Design defaults
-below are proposals, not approved implementation decisions. Implementation has not
-started. Resolve material open questions before promoting this request to Planned.
+Implementation was authorized by the subsequent `/goal` request for this plan.
+The implementation retains the existing production API and supported subset.
 
 ## Research Findings
 
@@ -35,8 +34,8 @@ not executed.
 
 Retain round-trip equality, but add independent evidence. No production JSON/API
 change. Run any mutating verification only against disposable fixtures. Avoid
-normalizing arbitrary SQL with regular expressions. CI-provider selection remains
-open; offline commands already exist in package.json.
+normalizing arbitrary SQL with regular expressions. GitHub Actions runs offline checks on pushes and pull requests, with a separate
+manually dispatched disposable Oracle job.
 
 Preserve read-only extraction, offline transform/validate/generate, trusted SQL
 fragment boundaries, independent generation validation, deterministic ordering,
@@ -77,14 +76,35 @@ against disposable Oracle services.
 
 ## Acceptance Criteria
 
-- [ ] A repeated exporter defect cannot satisfy all fidelity assertions.
-- [ ] SQL literal changes remain visible to comparisons.
-- [ ] Default-scope extraction is verified using a restricted account.
-- [ ] Offline checks and a documented disposable Oracle test workflow are reproducible.
-- [ ] Existing pipeline invariants and stated compatibility behavior remain covered.
-- [ ] README and relevant architecture decisions describe the final behavior.
+- [x] A repeated exporter defect cannot satisfy all fidelity assertions.
+- [x] SQL literal changes remain visible to comparisons.
+- [x] Default-scope extraction is verified using a restricted account.
+- [x] Offline checks and a documented disposable Oracle test workflow are reproducible.
+- [x] Existing pipeline invariants and stated compatibility behavior remain covered.
+- [x] README and relevant architecture decisions describe the final behavior.
 
 ## Risks and Open Questions
 
-CI provider, Oracle runner resources, and required-versus-scheduled integration
-policy need confirmation. Independent queries must not merely copy adapter logic.
+The Oracle workflow uses ubuntu-24.04; allocate 16 GiB RAM for two databases and
+sufficient image/volume disk. Use a larger runner if necessary. Repository settings
+must require the offline check; Oracle integration is manual. Hosted workflow
+execution and branch-protection setup are not performed by local implementation.
+Independent expectations are handwritten from fixture DDL, not adapter output.
+
+## Implementation and verification
+
+- Added direct, fixed source/destination catalog expectations and destination DML
+  assertions, while retaining round-trip equality and existing restriction probes.
+- Replaced unsafe expression normalization with a test-only quote-aware tokenizer;
+  regression cases distinguish literals that the previous helper collapsed.
+- Added numeric/character/literal boundary columns and passwordless proxy readers.
+  Default ALL extraction uses explicit SELECT grants; limited visibility must fail
+  for FK and view dependencies. Source verification performs no mutations.
+- Extended long LONG text, default scope isolation, and diamond/cycle extraction
+  coverage; existing corruption tests and semantic graph tests remain in place.
+- Added GitHub Actions workflows, README provisioning guidance, and ADR 0006.
+
+Validation: 126 offline tests passed; TypeScript typecheck and build passed.
+All 3 live Oracle integration tests passed against the disposable Compose pair
+(Oracle Free; catalog-reported version 23.0.0.0.0). Formatting and git diff checks
+also passed. Hosted GitHub Actions execution was not performed.

@@ -29,7 +29,7 @@ ALTER SESSION SET CONTAINER = FREEPDB1;
 BEGIN
   FOR schema_name IN (
     SELECT column_value AS username
-    FROM TABLE(sys.odcivarchar2list('FINANCE', 'COMMERCE', 'CATALOG', 'IAM'))
+    FROM TABLE(sys.odcivarchar2list('LIMITED_READER', 'SCHEMA_READER', 'FINANCE', 'COMMERCE', 'CATALOG', 'IAM'))
   ) LOOP
     BEGIN
       EXECUTE IMMEDIATE 'DROP USER ' || schema_name.username || ' CASCADE';
