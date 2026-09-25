@@ -172,6 +172,56 @@ sufficient Node.js heap memory.
 Keep source schema DDL stable during extraction. Separate catalog queries are not
 a single point-in-time schema snapshot.
 
+## Extraction progress and measured performance
+
+Add `--progress-json` to `extract` to write versioned JSON-lines events to stderr:
+
+```bash
+npm run schema -- extract --dsn source-host:1521/SOURCEPDB \
+  --user EXPORT_READER --objects objects.json --output source.json \
+  --progress-json 2> extraction-progress.jsonl
+```
+
+Normal stdout and source artifact content are unchanged. Without the flag there
+are no progress events. Events contain `version: 1`, a generated `runId`, `stage`,
+`event` (`start`, `complete`, or `failure`), and monotonic `elapsedMs` for that
+operation. Query events add a stable `queryCategory` and, on successful completion,
+`rows` after all pages have been fetched, decoded, and closed. Table/view traversal
+events and single-object queries include `object: {owner, name}`. Stages are `password`, `connection`, `extract`, `object`,
+`query`, and `publication`; terminal CLI errors use `cli`. In interactive progress mode, `password/start`
+replaces the plain-text prompt; type the password normally (input remains hidden).
+For unattended capture, supply `ORACLE_PASSWORD`. A start without a terminal
+event identifies an outstanding operation; these are operation events, not periodic
+heartbeats or percentage estimates. A completed extraction precedes publication;
+only `publication/complete` means the source artifact was published.
+
+Failures include an allowlisted catalog code (`CATALOG_UNKNOWN_VALUE`,
+`CATALOG_CARDINALITY`, `CATALOG_INCOMPLETE_METADATA`) or `EXTRACTION_FAILED`.
+With progress enabled, CLI failures also use JSON and omit raw error messages.
+Events never include passwords, usernames used to connect, DSNs/descriptors, TNS
+contents, SQL/binds, expression text, or driver messages. Schema object identifiers
+are included intentionally. Events are separate from semantic diagnostics and
+source/target formats are unchanged. Library callers can share an optional
+`ExtractionProgress(callback)` between `OracleCatalog` and `extractSource`;
+synchronous observer exceptions are ignored so telemetry cannot alter extraction.
+
+Constraint member reads and index key/expression reads use sequential batches of
+up to 32 exact owner/name pairs, within each table's selected metadata. FK member
+batches include referenced constraint identities without expanding table selection.
+No concurrent queries share a connection. Missing members, duplicates, gaps, and
+out-of-batch results fail explicitly. Complete LONG reads and ALL/DBA scope remain
+unchanged. Batch size bounds query predicates, not total model memory.
+
+Run `npm run benchmark:extraction` for isolated synthetic comparisons at batch sizes
+1, 16, 32, and 64 (or append `-- 32` for one size). Each JSON line reports the
+workload, query count, elapsed milliseconds, sampled peak RSS, process peak RSS,
+and a metadata hash excluding extraction time. The runner verifies identical
+hashes across sizes. The measured 20-table latency fixture fell from 657 to 237
+queries; the four-table, 40-member fixture fell from 521 to 65. These are simulated
+transport results, not production speed guarantees. See the
+[measurement report](docs/benchmarks/extraction.md) and
+[ADR 0007](docs/adr/0007-extraction-observability-and-batching.md).
+
 ## One-hop selection and preserved source facts
 
 For `A -> B -> C`, selecting A fetches table definitions for **A and B only**.

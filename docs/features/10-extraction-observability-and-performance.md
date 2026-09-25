@@ -1,6 +1,6 @@
 # Feature: Extraction observability and measured performance
 
-- Status: Draft request — captured from architecture review; not approved for implementation
+- Status: Implemented — authorized by the feature goal on 2026-09-24
 - Date: 2026-09-24
 - Priority: Medium
 - Request: Make extraction progress and bottlenecks observable, then reduce measured round trips.
@@ -15,9 +15,9 @@ Affected stages: extract and CLI; shared stage events may cover offline commands
 Exclude telemetry services, mandatory logging infrastructure, unbounded concurrency,
 and changing the one-hop selection contract.
 
-This request captures the user's authorized review recommendations. Design defaults
-below are proposals, not approved implementation decisions. Implementation has not
-started. Resolve material open questions before promoting this request to Planned.
+Implemented under the user's feature goal. The optional naming/workload question
+received no override, so implementation uses `--progress-json` and the representative
+synthetic workloads described below. No architecture invariant is changed.
 
 ## Research Findings
 
@@ -33,18 +33,18 @@ not executed.
 
 ## Decisions and Boundaries
 
-Proposed default: opt-in JSON-lines progress on stderr, preserving artifact bytes
+Selected default: opt-in JSON-lines progress on stderr, preserving artifact bytes
 and stdout behavior. Use a typed optional event callback in core extraction/catalog
 code. Never log passwords, raw SQL/binds, connection descriptors, or TNS file contents.
-No source/target JSON format change. Batch only after measuring a baseline.
+No source/target JSON format change. The baseline was measured before batching was implemented.
 
 Preserve read-only extraction, offline transform/validate/generate, trusted SQL
 fragment boundaries, independent generation validation, deterministic ordering,
 non-overwriting artifacts, and secret exclusion. Invariant exceptions: none proposed.
 
-## Proposed Design
+## Final Design
 
-Proposed event fields: version, runId, stage, event, queryCategory, object when
+Event fields: version, runId, stage, event, queryCategory, object when
 applicable, elapsedMs, rows, and stable error code. Separate telemetry from semantic
 diagnostics. Record query counts, wall time, and peak memory in a benchmark report.
 
@@ -54,7 +54,7 @@ and explicit missing-data failures. Do not apply Promise.all indiscriminately to
 one connection. Evaluate workbook streaming or broader concurrency only if measured
 memory or latency warrants a separate request.
 
-## Implementation Plan
+## Completed Implementation
 
 1. Define event interface and CLI opt-in in `src/cli.ts`.
 2. Instrument queryRows and extraction traversal in `src/catalog.ts` and `src/extract.ts`.
@@ -75,15 +75,33 @@ against disposable Oracle services.
 
 ## Acceptance Criteria
 
-- [ ] Operators can distinguish active progress from failure during extraction.
-- [ ] Events contain no credentials or connection configuration.
-- [ ] Benchmarks report latency, query counts, and memory before and after batching.
-- [ ] Optimized extraction preserves supported metadata and rejection behavior.
-- [ ] Existing pipeline invariants and stated compatibility behavior remain covered.
-- [ ] README and relevant architecture decisions describe the final behavior.
+- [x] Operators can distinguish active progress from failure during extraction.
+- [x] Events contain no credentials or connection configuration.
+- [x] Benchmarks report latency, query counts, and memory before and after batching.
+- [x] Optimized extraction preserves supported metadata and rejection behavior.
+- [x] Existing pipeline invariants and stated compatibility behavior remain covered.
+- [x] README and relevant architecture decisions describe the final behavior.
 
-## Risks and Open Questions
+## Results and Limits
 
-Confirm event CLI naming and benchmark workload/latency targets before freezing
-interfaces. Batch-size and memory limits should follow measurements, not an assumed
-universal speed target.
+- Versioned `--progress-json` stderr events cover password input, connection,
+  extraction, table/view reads, queries, publication, and safe CLI failures.
+- A shared optional `ExtractionProgress` callback has explicit query categories,
+  monotonic timings, decoded row counts, allowlisted error codes, and no raw driver
+  diagnostics. Observer exceptions do not change extraction.
+- Batches contain at most 32 exact constraint/index owner/name pairs, with bound
+  predicates, full LONG reads, paged result sets, and sequential connection use.
+- Synthetic workloads vary 1–20 tables, 1–40 constraints/indexes per table, view
+  depth 0–4, and 0/2 ms simulated execute latency. The default reduced query counts
+  657 → 237 and 521 → 65 on the larger fixtures, preserving metadata hashes.
+- [Benchmark report](../benchmarks/extraction.md) records pre-change baseline,
+  isolated size 1/16/32/64 comparisons, wall time, memory, and measurement limits.
+  [ADR 0007](../adr/0007-extraction-observability-and-batching.md) records decisions.
+- Offline tests, strict typecheck, build, and all four live Oracle integration
+  tests pass, including equality of batched and single-member extraction of all
+  98 source tables and selected views under restricted ALL-scope access.
+
+Timings are illustrative synthetic observations, not production speed guarantees.
+Batch size bounds predicates, not total memory or individual LONG size. Metadata
+still grows with selection size. There is no heartbeat during an outstanding
+query, no snapshot consistency change, and no concurrency or workbook streaming.

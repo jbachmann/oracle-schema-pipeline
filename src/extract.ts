@@ -1,3 +1,4 @@
+import { ExtractionProgress } from './progress.js';
 import {
   objectKey,
   uniqueReferences,
@@ -25,6 +26,17 @@ export interface SourceCatalog {
 export async function extractSource(
   catalog: SourceCatalog,
   selection: ObjectSelection,
+  progress = new ExtractionProgress(),
+): Promise<SourceDocument> {
+  return progress.measure('extract', () =>
+    extract(catalog, selection, progress),
+  );
+}
+
+async function extract(
+  catalog: SourceCatalog,
+  selection: ObjectSelection,
+  progress: ExtractionProgress,
 ): Promise<SourceDocument> {
   if (selection.views.length && (!catalog.view || !catalog.viewDependencies))
     throw new Error('Catalog does not support views.');
@@ -44,7 +56,11 @@ export async function extractSource(
       key = objectKey(reference);
     if (seen.has(key)) continue;
     seen.add(key);
-    const view = await catalog.view!(reference);
+    const view = await progress.measure(
+      'object',
+      () => catalog.view!(reference),
+      { object: reference },
+    );
     view.dependencies = await catalog.viewDependencies!(reference);
     view.role = viewTargets.has(key) ? 'target' : 'dependency';
     views.push(view);
@@ -69,7 +85,11 @@ export async function extractSource(
     ...parents,
     ...viewTables,
   ])) {
-    const table = await catalog.table(reference),
+    const table = await progress.measure(
+        'object',
+        () => catalog.table(reference),
+        { object: reference },
+      ),
       key = objectKey(reference);
     table.role = tableTargets.has(key)
       ? 'target'

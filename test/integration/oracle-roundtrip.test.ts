@@ -1,3 +1,4 @@
+import { ExtractionProgress, type ProgressEvent } from '../../src/progress.js';
 import {
   assertIndependentFacts,
   assertDestinationBehavior,
@@ -84,13 +85,18 @@ async function runSqlplus(service: string, sql: string): Promise<string> {
   ).stdout;
 }
 
-async function pipeline(
-  args: string[],
-  outputDirectory: string,
-): Promise<void> {
-  await command(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...args], {
-    env: { ...process.env, ORACLE_PASSWORD: password, TMPDIR: outputDirectory },
-  });
+async function pipeline(args: string[], outputDirectory: string) {
+  return await command(
+    process.execPath,
+    ['--import', 'tsx', 'src/cli.ts', ...args],
+    {
+      env: {
+        ...process.env,
+        ORACLE_PASSWORD: password,
+        TMPDIR: outputDirectory,
+      },
+    },
+  );
 }
 
 async function selectedTables(
@@ -206,9 +212,10 @@ test(
       `${JSON.stringify({ version: 2, tables, views: selectedViews }, null, 2)}\n`,
     );
 
-    await pipeline(
+    const extractionOutput = await pipeline(
       [
         'extract',
+        '--progress-json',
         '--dsn',
         sourceDsn,
         '--user',
@@ -220,6 +227,24 @@ test(
       ],
       directory,
     );
+    const progressEvents = extractionOutput.stderr
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as ProgressEvent);
+    assert.ok(
+      progressEvents.some(
+        (event) =>
+          event.stage === 'query' &&
+          event.event === 'complete' &&
+          typeof event.rows === 'number',
+      ),
+    );
+    assert.equal(progressEvents.at(-1)!.stage, 'publication');
+    assert.equal(progressEvents.at(-1)!.event, 'complete');
+    assert.equal(new Set(progressEvents.map((event) => event.runId)).size, 1);
+    assert.ok(!extractionOutput.stderr.includes(password));
+    assert.ok(!extractionOutput.stderr.includes(sourceDsn));
+    assert.match(extractionOutput.stdout, /^Extracted 98 table definitions/);
     await pipeline(
       ['transform', '--input', sourceFile, '--output', targetFile],
       directory,
@@ -522,3 +547,46 @@ test('restricted ALL catalog sessions have only explicit grants and reject hidde
     }
   }
 });
+
+test(
+  'bounded catalog batches match single-member extraction of the live multi-owner selection',
+  { timeout: 120_000 },
+  async () => {
+    const dsn =
+      process.env.ORACLE_SOURCE_DSN ?? (await publishedDsn('oracle-source'));
+    const connection = await oracle.getConnection({
+      user: 'SYSTEM[SCHEMA_READER]',
+      password,
+      connectString: dsn,
+    });
+    try {
+      const selection = {
+        version: 2 as const,
+        tables: await selectedTables(dsn),
+        views: selectedViews,
+      };
+      const counts: number[] = [];
+      const documents = [];
+      for (const size of [1, 32]) {
+        let queries = 0;
+        const progress = new ExtractionProgress((event) => {
+          if (event.stage === 'query' && event.event === 'complete') queries++;
+        });
+        const { extractedAt: _, ...document } = await extractSource(
+          new OracleCatalog(connection, 'all', progress, size),
+          selection,
+          progress,
+        );
+        documents.push(document);
+        counts.push(queries);
+      }
+      assert.deepEqual(documents[1], documents[0]);
+      assert.ok(
+        counts[1] < counts[0],
+        `Expected fewer queries: ${counts.join(' -> ')}`,
+      );
+    } finally {
+      await connection.close();
+    }
+  },
+);

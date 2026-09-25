@@ -1,3 +1,4 @@
+import { ExtractionProgress, progressErrorCode } from './progress.js';
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import {
@@ -18,6 +19,12 @@ import {
 } from './files.js';
 import { resolveConnectionOptions } from './connection.js';
 
+let progressJson = process.argv.includes('--progress-json');
+const started = performance.now();
+const progress = new ExtractionProgress((event) => {
+  if (progressJson) process.stderr.write(JSON.stringify(event) + '\n');
+});
+
 async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, 'utf8'));
 }
@@ -30,6 +37,7 @@ async function main(): Promise<void> {
     allowPositionals: true,
     options: {
       help: { type: 'boolean' },
+      'progress-json': { type: 'boolean' },
       dsn: { type: 'string' },
       user: { type: 'string' },
       tnsnames: { type: 'string' },
@@ -54,6 +62,7 @@ async function main(): Promise<void> {
   npm run schema -- generate --input target.json --output clone.sql
   npm run schema -- dictionary --input source.json --output dictionary.xlsx
 
+Extract accepts --progress-json for versioned JSON-lines progress on stderr.
 Only extract connects to Oracle. Catalog scope: all (default) or dba.
 Connection arguments may be visible to local processes; never include passwords.
 Password: hidden prompt or ORACLE_PASSWORD.
@@ -65,6 +74,9 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
   }
   if (positionals.length !== 1) throw new Error('Supply exactly one command.');
   const command = positionals[0];
+  progressJson = values['progress-json'] ?? false;
+  if (progressJson && command !== 'extract')
+    throw new Error('--progress-json is only supported by extract.');
   if (
     !['extract', 'transform', 'validate', 'generate', 'dictionary'].includes(
       command,
@@ -118,18 +130,27 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
         import('./extract.js'),
         import('./password.js'),
       ]);
-    const connection = await oracle.getConnection({
-      user: requireOption(values.user, 'user'),
-      ...resolvedConnection,
-      password: await readPassword(),
-    });
+    const user = requireOption(values.user, 'user');
+    const password = await progress.measure('password', () =>
+      readPassword(progressJson ? () => {} : undefined),
+    );
+    const connection = await progress.measure('connection', () =>
+      oracle.getConnection({
+        user,
+        ...resolvedConnection,
+        password,
+      }),
+    );
     try {
       connection.callTimeout = 300_000;
       const source = await extractSource(
-        new OracleCatalog(connection, scope),
+        new OracleCatalog(connection, scope, progress),
         selection,
+        progress,
       );
-      await writeJson(values.output!, source, publicationOptions);
+      await progress.measure('publication', () =>
+        writeJson(values.output!, source, publicationOptions),
+      );
       console.log(
         `Extracted ${source.tables.length} table definitions to ${values.output}.`,
       );
@@ -190,6 +211,19 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
   }
 }
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(
+    progressJson
+      ? JSON.stringify({
+          version: 1,
+          runId: progress.runId,
+          stage: 'cli',
+          event: 'failure',
+          elapsedMs: performance.now() - started,
+          errorCode: progressErrorCode(error),
+        })
+      : error instanceof Error
+        ? error.message
+        : String(error),
+  );
   process.exitCode = 1;
 });

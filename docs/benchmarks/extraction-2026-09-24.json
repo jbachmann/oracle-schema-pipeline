@@ -1,0 +1,303 @@
+{
+  "environment": {
+    "node": "v24.11.1",
+    "platform": "darwin",
+    "arch": "x64"
+  },
+  "baselineBeforeBatching": [
+    {
+      "workload": {
+        "tables": 1,
+        "constraints": 1,
+        "indexes": 1,
+        "viewDepth": 0,
+        "latencyMs": 0
+      },
+      "queries": 12,
+      "peakRssBytes": 93908992,
+      "elapsedMs": 25.28071799999998,
+      "metadataSha256": "1116edbdae875ce3a77955dfb686f67b1c55bfa66223c44296e6afca99bc71d3"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 0
+      },
+      "queries": 657,
+      "peakRssBytes": 103202816,
+      "elapsedMs": 32.99986799999999,
+      "metadataSha256": "23881da5d5872516fffa050bfd0a20ab42f1f0529be31a0940bdddba4424385f"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 2
+      },
+      "queries": 657,
+      "peakRssBytes": 106450944,
+      "elapsedMs": 1639.9478359999998,
+      "metadataSha256": "23881da5d5872516fffa050bfd0a20ab42f1f0529be31a0940bdddba4424385f"
+    },
+    {
+      "workload": {
+        "tables": 4,
+        "constraints": 40,
+        "indexes": 40,
+        "viewDepth": 2,
+        "latencyMs": 2
+      },
+      "queries": 521,
+      "peakRssBytes": 107716608,
+      "elapsedMs": 1279.5655330000002,
+      "metadataSha256": "2ce9bb1a3d8abe31ed9f47c32f88be3be7d22af4dd0e9805957254abfaa8a727"
+    }
+  ],
+  "isolatedComparison": [
+    {
+      "workload": {
+        "tables": 1,
+        "constraints": 1,
+        "indexes": 1,
+        "viewDepth": 0,
+        "latencyMs": 0
+      },
+      "batchSize": 1,
+      "queries": 12,
+      "peakRssBytes": 89890816,
+      "peakProcessRssBytes": 89890816,
+      "elapsedMs": 12.920008999999993,
+      "metadataSha256": "1116edbdae875ce3a77955dfb686f67b1c55bfa66223c44296e6afca99bc71d3"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 0
+      },
+      "batchSize": 1,
+      "queries": 657,
+      "peakRssBytes": 82616320,
+      "peakProcessRssBytes": 82616320,
+      "elapsedMs": 34.87158199999999,
+      "metadataSha256": "23881da5d5872516fffa050bfd0a20ab42f1f0529be31a0940bdddba4424385f"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 2
+      },
+      "batchSize": 1,
+      "queries": 657,
+      "peakRssBytes": 79568896,
+      "peakProcessRssBytes": 79568896,
+      "elapsedMs": 1727.405764,
+      "metadataSha256": "23881da5d5872516fffa050bfd0a20ab42f1f0529be31a0940bdddba4424385f"
+    },
+    {
+      "workload": {
+        "tables": 4,
+        "constraints": 40,
+        "indexes": 40,
+        "viewDepth": 2,
+        "latencyMs": 2
+      },
+      "batchSize": 1,
+      "queries": 521,
+      "peakRssBytes": 83107840,
+      "peakProcessRssBytes": 83107840,
+      "elapsedMs": 1365.892089,
+      "metadataSha256": "2ce9bb1a3d8abe31ed9f47c32f88be3be7d22af4dd0e9805957254abfaa8a727"
+    },
+    {
+      "workload": {
+        "tables": 1,
+        "constraints": 1,
+        "indexes": 1,
+        "viewDepth": 0,
+        "latencyMs": 0
+      },
+      "batchSize": 16,
+      "queries": 12,
+      "peakRssBytes": 78168064,
+      "peakProcessRssBytes": 78172160,
+      "elapsedMs": 11.01317499999999,
+      "metadataSha256": "1116edbdae875ce3a77955dfb686f67b1c55bfa66223c44296e6afca99bc71d3"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 0
+      },
+      "batchSize": 16,
+      "queries": 237,
+      "peakRssBytes": 83828736,
+      "peakProcessRssBytes": 83828736,
+      "elapsedMs": 37.215964000000014,
+      "metadataSha256": "23881da5d5872516fffa050bfd0a20ab42f1f0529be31a0940bdddba4424385f"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 2
+      },
+      "batchSize": 16,
+      "queries": 237,
+      "peakRssBytes": 77971456,
+      "peakProcessRssBytes": 77971456,
+      "elapsedMs": 604.235124,
+      "metadataSha256": "23881da5d5872516fffa050bfd0a20ab42f1f0529be31a0940bdddba4424385f"
+    },
+    {
+      "workload": {
+        "tables": 4,
+        "constraints": 40,
+        "indexes": 40,
+        "viewDepth": 2,
+        "latencyMs": 2
+      },
+      "batchSize": 16,
+      "queries": 77,
+      "peakRssBytes": 83652608,
+      "peakProcessRssBytes": 83652608,
+      "elapsedMs": 216.529315,
+      "metadataSha256": "2ce9bb1a3d8abe31ed9f47c32f88be3be7d22af4dd0e9805957254abfaa8a727"
+    },
+    {
+      "workload": {
+        "tables": 1,
+        "constraints": 1,
+        "indexes": 1,
+        "viewDepth": 0,
+        "latencyMs": 0
+      },
+      "batchSize": 32,
+      "queries": 12,
+      "peakRssBytes": 74924032,
+      "peakProcessRssBytes": 74924032,
+      "elapsedMs": 8.203665,
+      "metadataSha256": "1116edbdae875ce3a77955dfb686f67b1c55bfa66223c44296e6afca99bc71d3"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 0
+      },
+      "batchSize": 32,
+      "queries": 237,
+      "peakRssBytes": 85536768,
+      "peakProcessRssBytes": 85536768,
+      "elapsedMs": 36.14045200000001,
+      "metadataSha256": "23881da5d5872516fffa050bfd0a20ab42f1f0529be31a0940bdddba4424385f"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 2
+      },
+      "batchSize": 32,
+      "queries": 237,
+      "peakRssBytes": 83734528,
+      "peakProcessRssBytes": 83734528,
+      "elapsedMs": 619.984238,
+      "metadataSha256": "23881da5d5872516fffa050bfd0a20ab42f1f0529be31a0940bdddba4424385f"
+    },
+    {
+      "workload": {
+        "tables": 4,
+        "constraints": 40,
+        "indexes": 40,
+        "viewDepth": 2,
+        "latencyMs": 2
+      },
+      "batchSize": 32,
+      "queries": 65,
+      "peakRssBytes": 82821120,
+      "peakProcessRssBytes": 82821120,
+      "elapsedMs": 188.09869500000002,
+      "metadataSha256": "2ce9bb1a3d8abe31ed9f47c32f88be3be7d22af4dd0e9805957254abfaa8a727"
+    },
+    {
+      "workload": {
+        "tables": 1,
+        "constraints": 1,
+        "indexes": 1,
+        "viewDepth": 0,
+        "latencyMs": 0
+      },
+      "batchSize": 64,
+      "queries": 12,
+      "peakRssBytes": 79015936,
+      "peakProcessRssBytes": 79015936,
+      "elapsedMs": 7.830577000000005,
+      "metadataSha256": "1116edbdae875ce3a77955dfb686f67b1c55bfa66223c44296e6afca99bc71d3"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 0
+      },
+      "batchSize": 64,
+      "queries": 237,
+      "peakRssBytes": 82362368,
+      "peakProcessRssBytes": 82362368,
+      "elapsedMs": 33.257779,
+      "metadataSha256": "23881da5d5872516fffa050bfd0a20ab42f1f0529be31a0940bdddba4424385f"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 2
+      },
+      "batchSize": 64,
+      "queries": 237,
+      "peakRssBytes": 78688256,
+      "peakProcessRssBytes": 78688256,
+      "elapsedMs": 662.197959,
+      "metadataSha256": "23881da5d5872516fffa050bfd0a20ab42f1f0529be31a0940bdddba4424385f"
+    },
+    {
+      "workload": {
+        "tables": 4,
+        "constraints": 40,
+        "indexes": 40,
+        "viewDepth": 2,
+        "latencyMs": 2
+      },
+      "batchSize": 64,
+      "queries": 53,
+      "peakRssBytes": 82313216,
+      "peakProcessRssBytes": 82313216,
+      "elapsedMs": 166.22465999999997,
+      "metadataSha256": "2ce9bb1a3d8abe31ed9f47c32f88be3be7d22af4dd0e9805957254abfaa8a727"
+    }
+  ]
+}

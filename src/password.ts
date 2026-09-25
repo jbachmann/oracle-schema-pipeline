@@ -1,12 +1,16 @@
 /** A small hidden TTY prompt; credentials are never accepted as CLI arguments. */
-export async function readPassword(): Promise<string> {
+export async function readPassword(
+  writePrompt: (text: string) => void = (text) => {
+    process.stderr.write(text);
+  },
+): Promise<string> {
   if (process.env.ORACLE_PASSWORD) return process.env.ORACLE_PASSWORD;
   const input = process.stdin;
   if (!input.isTTY)
     throw new Error(
       'Set ORACLE_PASSWORD when running without an interactive terminal',
     );
-  process.stderr.write('Source password: ');
+  writePrompt('Source password: ');
   const wasRaw = input.isRaw;
   input.setRawMode(true);
   input.setEncoding('utf8');
@@ -18,7 +22,7 @@ export async function readPassword(): Promise<string> {
       input.off('error', onError);
       input.setRawMode(wasRaw);
       input.pause();
-      process.stderr.write('\n');
+      writePrompt('\n');
     };
     const onError = (error: Error): void => {
       cleanup();
