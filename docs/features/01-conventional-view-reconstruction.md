@@ -1,6 +1,6 @@
 # Feature: Conventional View Reconstruction
 
-- Status: Planned
+- Status: Implemented
 - Date: 2026-09-23
 - Request: Explicitly select conventional Oracle views, recursively include their
   local table/view dependencies, and reconstruct them after all table DDL.

@@ -1,6 +1,6 @@
 # Feature: Least-Privilege Catalog Extraction and TNS Connections
 
-- Status: Planned
+- Status: Implemented
 - Date: 2026-09-24
 - Request: Let operators select least-privilege `ALL_*` or administrative
   `DBA_*` catalog views, and connect through either a full `tnsnames.ora` path

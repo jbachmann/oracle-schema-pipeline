@@ -1,6 +1,6 @@
 # Feature: Clone Table and Column Comments
 
-- Status: Planned
+- Status: Implemented
 - Date: 2026-09-24
 - Request: Capture comments on included source tables and columns and recreate
   them on the destination during cloning.
