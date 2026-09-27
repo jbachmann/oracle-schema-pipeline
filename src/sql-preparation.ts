@@ -1,3 +1,13 @@
+/**
+ * Collects the operations and diagnostics for one SQL preparation run. emit
+ * retains statement order and object attribution while checking each physical
+ * line against the conservative SQL*Plus UTF-8 byte limit. attemptRender turns
+ * caught rendering failures into diagnostics so preparation can continue.
+ *
+ * Failed renders return empty strings, so collected operations may be incomplete.
+ * validate.ts must reject errors before generate.ts assembles the final script.
+ * This collector only records results; it performs no database or file I/O.
+ */
 import type { Diagnostic } from './model.js';
 
 const sqlLineLimit = 2400;

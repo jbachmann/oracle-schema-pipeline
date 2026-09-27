@@ -1,3 +1,14 @@
+/**
+ * Coordinates SQL preparation from parsed target metadata and semantic analysis.
+ * Orders the reconstruction phases, sorts objects deterministically, and places
+ * deduplicated grants before the foreign keys and views that need them. Object
+ * rendering lives in ddl.ts; sql-preparation.ts collects SQL and diagnostics.
+ *
+ * validate.ts runs preparation to find rendering errors alongside metadata
+ * errors. Once validation succeeds, generate.ts joins the prepared operations
+ * into the output script. Preparation is entirely offline and never executes
+ * SQL or authorizes publication on its own.
+ */
 import { compareOrdinal, type analyzeTarget } from './semantic.js';
 import { renderComment } from './comments.js';
 import {

@@ -1,3 +1,13 @@
+/**
+ * Renders target metadata as Oracle DDL for tables, indexes, constraints, and
+ * views. These functions own identifier quoting and clause placement, reusing
+ * the datatype and identity renderers for column definitions. prepare.ts owns
+ * object ordering, grants, and the surrounding SQL*Plus script.
+ *
+ * Table and index rendering use the supplied attemptRender callback to report
+ * supported rendering failure cases without stopping diagnostic collection.
+ * Returned SQL still requires validation before generation can publish it.
+ */
 import { renderIdentity } from './identity.js';
 import { renderDataType } from './types.js';
 import {
