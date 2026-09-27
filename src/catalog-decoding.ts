@@ -1,3 +1,11 @@
+/**
+ * Validates Oracle driver results before catalog readers assemble source objects.
+ * Query execution reads every result-set page, checks each row against its supplied
+ * schema, and closes the result set even when fetching or decoding fails. Shared
+ * helpers enforce unique identities, contiguous member positions, and single-row
+ * expectations. CatalogError gives these validation failures consistent codes and
+ * object/field context so extraction rejects incomplete or inconsistent metadata.
+ */
 import oracle, { type BindParameters, type Connection } from 'oracledb';
 import { z } from 'zod';
 
