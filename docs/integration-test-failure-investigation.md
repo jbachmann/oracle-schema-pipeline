@@ -12,12 +12,12 @@ The initial complete run failed all four enabled integration tests; the
 operational local-clone test was skipped, as expected without
 `ORACLE_LOCAL_CLONE_INTEGRATION=1`.
 
-| Test | Observed failure | Explanation |
-| --- | --- | --- |
-| Generated SQL reconstructs the seeded source | Expected three boundary columns on `IAM.PERMISSIONS`, received `[]` | Source fixture validation ran before seeding completed. Failure is at `oracle-roundtrip.test.ts:217`, before extraction or generation. |
-| View restriction facts agree with Oracle | `ORA-01918: user 'CATALOG' does not exist` | This test assumes the first test has created destination schemas. The first test failed before replay, leaving a fresh destination empty. |
-| Restricted ALL catalog sessions | `ORA-00439: feature not enabled: Enterprise User Security` during proxy login | Reader accounts/proxy setup were not yet ready. The same login and privilege checks passed after seeding completed; this does not establish an Oracle edition limitation. |
-| Bounded catalog batches | The same `ORA-00439` during `SYSTEM[SCHEMA_READER]` login | Uses the same source fixture and has no independent readiness gate. |
+| Test                                         | Observed failure                                                              | Explanation                                                                                                                                                               |
+| -------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Generated SQL reconstructs the seeded source | Expected three boundary columns on `IAM.PERMISSIONS`, received `[]`           | Source fixture validation ran before seeding completed. Failure is at `oracle-roundtrip.test.ts:217`, before extraction or generation.                                    |
+| View restriction facts agree with Oracle     | `ORA-01918: user 'CATALOG' does not exist`                                    | This test assumes the first test has created destination schemas. The first test failed before replay, leaving a fresh destination empty.                                 |
+| Restricted ALL catalog sessions              | `ORA-00439: feature not enabled: Enterprise User Security` during proxy login | Reader accounts/proxy setup were not yet ready. The same login and privilege checks passed after seeding completed; this does not establish an Oracle edition limitation. |
+| Bounded catalog batches                      | The same `ORA-00439` during `SYSTEM[SCHEMA_READER]` login                     | Uses the same source fixture and has no independent readiness gate.                                                                                                       |
 
 The source startup log reports seeding began at `04:54:22.996 UTC` and completed
 at `04:54:39.192 UTC`. Later read-only catalog checks confirmed all four schema

@@ -71,6 +71,74 @@ test('catalog scope selects one complete view family', async () => {
 });
 
 const reference = { owner: 'APP', name: 'T' };
+
+for (const firstRead of ['foreignKeys', 'table'] as const) {
+  test(`constraint caches are shared after ${firstRead} and isolated between adapters`, async () => {
+    const statements: string[] = [];
+    const connection = tableConnection(
+      (sql, rows) => {
+        if (sql.includes('FROM dba_constraints c')) {
+          return rows.map((row) => ({
+            ...row,
+            CONSTRAINT_NAME: 'FK_VALUE',
+            CONSTRAINT_TYPE: 'R',
+            R_OWNER: 'APP',
+            R_CONSTRAINT_NAME: 'PK_PARENT',
+            PARENT_TABLE_NAME: 'PARENT',
+            DELETE_RULE: 'NO ACTION',
+          }));
+        }
+        if (sql.includes('FROM dba_cons_columns')) {
+          return [{ COLUMN_NAME: 'VALUE', POSITION: 1 }];
+        }
+        return rows;
+      },
+      undefined,
+      statements,
+    );
+    const constraintQueries = () =>
+      statements.filter(
+        (sql) =>
+          sql.includes('FROM dba_constraints c') ||
+          sql.includes('FROM dba_cons_columns'),
+      ).length;
+    const catalog = new OracleCatalog(connection, 'dba', undefined, 1);
+    await catalog[firstRead](reference);
+    assert.equal(constraintQueries(), 3);
+
+    const foreignKeys = await catalog.foreignKeys(reference);
+    const table = await catalog.table(reference);
+    assert.equal(foreignKeys.length, 1);
+    assert.deepEqual(table.constraints, foreignKeys);
+    assert.deepEqual(foreignKeys[0].columnPairs, [
+      { childColumn: 'VALUE', parentColumn: 'VALUE' },
+    ]);
+    assert.equal(constraintQueries(), 3);
+
+    const freshCatalog = new OracleCatalog(connection, 'dba', undefined, 1);
+    assert.deepEqual(await freshCatalog.foreignKeys(reference), foreignKeys);
+    assert.equal(constraintQueries(), 6);
+  });
+}
+
+test('table and constraint unsupported features retain their diagnostic order', async () => {
+  const connection = tableConnection((sql, rows) => {
+    if (sql.includes('FROM dba_tables')) {
+      return rows.map((row) => ({ ...row, TEMPORARY: 'Y' }));
+    }
+    if (sql.includes('FROM dba_constraints c')) {
+      return rows.map((row) => ({ ...row, CONSTRAINT_TYPE: 'V' }));
+    }
+    return rows;
+  });
+  const table = await new OracleCatalog(connection, 'dba').table(reference);
+  assert.deepEqual(table.constraints, []);
+  assert.deepEqual(table.unsupportedFeatures, [
+    'Temporary table',
+    'Constraint CK_VALUE has unsupported type V',
+  ]);
+});
+
 for (const [label, query, field] of [
   ['table flag', 'FROM dba_tables', 'TEMPORARY'],
   ['column flag', 'FROM dba_tab_cols', 'NULLABLE'],

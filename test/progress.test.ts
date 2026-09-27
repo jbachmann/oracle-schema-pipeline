@@ -68,7 +68,9 @@ test('row-count failures preserve success and omit rows from completion', async 
     events.map((event) => event.event),
     ['start', 'complete'],
   );
-  assert.ok(events.every((event) => !('rows' in event) && !('errorCode' in event)));
+  assert.ok(
+    events.every((event) => !('rows' in event) && !('errorCode' in event)),
+  );
   assert.ok(!JSON.stringify(events).includes(secret));
 });
 
@@ -76,10 +78,15 @@ test('row counting is skipped without an observer', async () => {
   const progress = new ExtractionProgress();
   const value = ['T'];
   let counted = false;
-  const result = await progress.measure('query', async () => value, {}, () => {
-    counted = true;
-    return value.length;
-  });
+  const result = await progress.measure(
+    'query',
+    async () => value,
+    {},
+    () => {
+      counted = true;
+      return value.length;
+    },
+  );
 
   assert.equal(result, value);
   assert.equal(counted, false);
