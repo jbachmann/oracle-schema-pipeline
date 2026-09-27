@@ -82,7 +82,15 @@ async function runSqlplus(service: string, sql: string): Promise<string> {
   return (
     await command(
       'docker',
-      [...testComposeArgs, 'exec', '-T', service, 'sqlplus', '-s', '/ as sysdba'],
+      [
+        ...testComposeArgs,
+        'exec',
+        '-T',
+        service,
+        'sqlplus',
+        '-s',
+        '/ as sysdba',
+      ],
       { input: script },
     )
   ).stdout;
@@ -190,10 +198,8 @@ test(
     if (process.env.ORACLE_INTEGRATION_USE_EXISTING !== '1')
       await compose('up', '-d', '--wait');
 
-    const sourceDsn =
-      await publishedDsn('oracle-source');
-    const destinationDsn =
-      await publishedDsn('oracle-destination');
+    const sourceDsn = await publishedDsn('oracle-source');
+    const destinationDsn = await publishedDsn('oracle-destination');
     const directory = await mkdtemp(join(tmpdir(), 'oracle-schema-roundtrip-'));
     const tableFile = join(directory, 'objects.json');
     const sourceFile = join(directory, 'source.json');
@@ -388,8 +394,7 @@ test(
     const connection = await oracle.getConnection({
       user: 'SYSTEM',
       password,
-      connectString:
-        await publishedDsn('oracle-destination'),
+      connectString: await publishedDsn('oracle-destination'),
     });
     const owner = 'CATALOG';
     const table = 'CATALOG_DECODE_PROBE';
@@ -492,8 +497,7 @@ test(
 );
 
 test('restricted ALL catalog sessions have only explicit grants and reject hidden dependencies', async () => {
-  const connectString =
-    await publishedDsn('oracle-source');
+  const connectString = await publishedDsn('oracle-source');
   for (const user of ['SCHEMA_READER', 'LIMITED_READER']) {
     const connection = await oracle.getConnection({
       user: `SYSTEM[${user}]`,
@@ -555,8 +559,7 @@ test(
   'bounded catalog batches match single-member extraction of the live multi-owner selection',
   { timeout: 600_000 },
   async () => {
-    const dsn =
-      await publishedDsn('oracle-source');
+    const dsn = await publishedDsn('oracle-source');
     const connection = await oracle.getConnection({
       user: 'SYSTEM[SCHEMA_READER]',
       password,

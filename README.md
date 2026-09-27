@@ -475,8 +475,8 @@ No existing artifact is overwritten.
 | `validate.ts`             | Cross-object references and supported-feature checks              |
 | `types.ts`, `identity.ts` | Focused datatype and identity rendering                           |
 | `generate.ts`             | Ordered SQL generation from a validated model                     |
-| `files.ts`                | Atomic artifact and bundle publication                             |
-| `completion.ts`          | Completion manifest and artifact verification                     |
+| `files.ts`                | Atomic artifact and bundle publication                            |
+| `completion.ts`           | Completion manifest and artifact verification                     |
 | `cli.ts`, `password.ts`   | Commands and source connection credentials                        |
 
 To extend support, first add/capture the required model facts, then add target

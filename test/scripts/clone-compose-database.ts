@@ -22,7 +22,10 @@ async function waitForDatabase<T>(
     try {
       return await operation();
     } catch (error) {
-      const code = error instanceof Error ? /ORA-\d{5}/u.exec(error.message)?.[0] : undefined;
+      const code =
+        error instanceof Error
+          ? /ORA-\d{5}/u.exec(error.message)?.[0]
+          : undefined;
       if (!code || !startupRetryCodes.has(code) || Date.now() >= deadline)
         throw error;
       console.log(`${service} is still opening (${code}); retrying...`);
@@ -142,10 +145,8 @@ async function main(): Promise<void> {
   console.log('Starting Oracle source and destination...');
   await compose(['up', '-d', '--wait']);
 
-  const sourceDsn =
-    await publishedDsn('oracle-source');
-  const destinationDsn =
-    await publishedDsn('oracle-destination');
+  const sourceDsn = await publishedDsn('oracle-source');
+  const destinationDsn = await publishedDsn('oracle-destination');
   const existingSchemas = await waitForDatabase('Destination', () =>
     destinationSchemaCount(destinationDsn),
   );
