@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   createArtifactWriter,
   jsonBytes,
+  OutputError,
   writeJson,
   writeNewBuffer,
   writeNewFile,
@@ -107,30 +108,54 @@ test('staging failures never expose final contents and cleanup owns only its fil
   }
 });
 
-test('unsupported publication fails closed without copying', async () => {
-  const fs = await import('node:fs/promises');
-  const directory = await mkdtemp(join(tmpdir(), 'publication-unsupported-'));
-  try {
-    const writer = createArtifactWriter({
-      ...fs,
-      link: async () => {
-        throw Object.assign(new Error('unsupported'), { code: 'ENOTSUP' });
-      },
-    });
-    const path = join(directory, 'output');
-    await assert.rejects(
-      writer.publish(
-        [{ role: 'json', path, contents: jsonBytes({ ok: true }) }],
-        undefined,
-        { tempDir: directory },
-      ),
-      { code: 'OUTPUT_PUBLICATION_UNSUPPORTED' },
+for (const [code, expectedCode] of [
+  ['EEXIST', 'OUTPUT_EXISTS'],
+  ['EXDEV', 'OUTPUT_PUBLICATION_UNSUPPORTED'],
+  ['ENOTSUP', 'OUTPUT_PUBLICATION_UNSUPPORTED'],
+  ['EOPNOTSUPP', 'OUTPUT_PUBLICATION_UNSUPPORTED'],
+  ['EPERM', 'OUTPUT_PUBLICATION_UNSUPPORTED'],
+  ['ENOSYS', 'OUTPUT_PUBLICATION_UNSUPPORTED'],
+  ['EIO', 'OUTPUT_PUBLICATION_FAILED'],
+  [undefined, 'OUTPUT_PUBLICATION_FAILED'],
+] as const) {
+  test(`link failure ${code ?? 'without a code'} reports ${expectedCode} without publishing`, async () => {
+    const fs = await import('node:fs/promises');
+    const directory = await fs.realpath(
+      await mkdtemp(join(tmpdir(), 'publication-link-failure-')),
     );
-    await assert.rejects(access(path));
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+    try {
+      const failure = Object.assign(new Error('link failed'), { code });
+      const writer = createArtifactWriter({
+        ...fs,
+        link: async () => {
+          throw failure;
+        },
+      });
+      const path = join(directory, 'output');
+      await assert.rejects(
+        writer.publish(
+          [{ role: 'json', path, contents: jsonBytes({ ok: true }) }],
+          undefined,
+          { tempDir: directory },
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof OutputError);
+          assert.equal(error.code, expectedCode);
+          assert.equal(error.cause, failure);
+          assert.equal(
+            error.message,
+            `${expectedCode}: Cannot publish ${path}; atomic hard links are required. Check permissions and --temp-dir.`,
+          );
+          return true;
+        },
+      );
+      await assert.rejects(access(path));
+      assert.deepEqual(await fs.readdir(directory), []);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
 
 test('cleanup failure reports published status without failing a committed write', async () => {
   const fs = await import('node:fs/promises');
@@ -366,6 +391,87 @@ test('directory sync failures warn without changing bundle completion', async ()
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+for (const failureStage of ['directory sync', 'cleanup']) {
+  test(`throwing warning callback during ${failureStage} preserves bundle completion`, async () => {
+    const fs = await import('node:fs/promises');
+    const directory = await fs.realpath(
+      await mkdtemp(join(tmpdir(), 'publication-warning-')),
+    );
+    try {
+      const warnings: string[] = [];
+      const writer = createArtifactWriter({
+        ...fs,
+        open: (async (...args: Parameters<typeof fs.open>) => {
+          const handle = await fs.open(...args);
+          if (failureStage === 'directory sync' && args[1] === 'r') {
+            handle.sync = async () => {
+              throw new Error('directory sync failed');
+            };
+          }
+          return handle;
+        }) as typeof fs.open,
+        rm: async (...args) => {
+          if (failureStage === 'cleanup') {
+            throw new Error('cleanup failed');
+          }
+          await fs.rm(...args);
+        },
+      });
+      const path = join(directory, 'target');
+      const completion = join(directory, 'completion');
+      const contents = jsonBytes({ ok: true });
+      await writer.publish([{ role: 'target', path, contents }], completion, {
+        tempDir: directory,
+        onWarning: (message) => {
+          warnings.push(message);
+          throw new Error('warning callback failed');
+        },
+      });
+      assert.deepEqual(await readFile(path), contents);
+      const { createHash } = await import('node:crypto');
+      assert.deepEqual(JSON.parse(await readFile(completion, 'utf8')), {
+        version: 1,
+        artifacts: [
+          {
+            role: 'target',
+            path,
+            bytes: contents.byteLength,
+            sha256: createHash('sha256').update(contents).digest('hex'),
+          },
+        ],
+      });
+      if (failureStage === 'directory sync') {
+        assert.equal(warnings.length, 2);
+        assert.ok(
+          warnings.every((message) =>
+            message.startsWith('OUTPUT_DURABILITY_WARNING:'),
+          ),
+        );
+        assert.deepEqual((await fs.readdir(directory)).sort(), [
+          'completion',
+          'target',
+        ]);
+      } else {
+        assert.equal(warnings.length, 1);
+        assert.match(
+          warnings[0],
+          /^OUTPUT_CLEANUP_WARNING: 2 file\(s\) published;/,
+        );
+        const leftovers = (await fs.readdir(directory)).filter((name) =>
+          name.startsWith('publication-'),
+        );
+        assert.equal(leftovers.length, 1);
+        assert.deepEqual(
+          (await fs.readdir(join(directory, leftovers[0]))).sort(),
+          ['0', '1'],
+        );
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
 
 for (const interruption of ['staging', 'publication']) {
   test(
