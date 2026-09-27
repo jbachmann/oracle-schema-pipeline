@@ -663,7 +663,7 @@ test('view extraction visits diamond dependencies once and stops at base tables'
     views: [views[0].reference],
   };
   const source = await extractSource(catalog, selection);
-  assert.deepEqual(visits.sort(), ['BASE', 'LEFT', 'RIGHT', 'ROOT']);
+  assert.deepEqual(visits, ['ROOT', 'LEFT', 'BASE', 'RIGHT']);
   assert.equal(source.tables[0].role, 'view-dependency');
   assert.deepEqual(
     validateTarget(transformSource(source, policySchema.parse({}))),

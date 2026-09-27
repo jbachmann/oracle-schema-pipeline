@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  constants,
+  mkdtemp,
+  mkdir,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { resolveConnectionOptions } from '../src/connection.js';
@@ -45,6 +53,76 @@ test('connection option conflicts and incomplete pairs fail', async () => {
   await assert.rejects(
     resolveConnectionOptions({ tnsnames: '/tmp/tnsnames.ora' }, aliases),
     /Missing --tns-alias/,
+  );
+});
+
+test('missing TNS file fails before listing aliases', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'oracle-tns-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'tnsnames.ora');
+  let aliasesCalled = false;
+
+  await assert.rejects(
+    resolveConnectionOptions({ tnsnames: path, tnsAlias: 'X' }, async () => {
+      aliasesCalled = true;
+      return ['X'];
+    }),
+    {
+      message: `TNS file is missing, unreadable, or not a regular file: ${path}.`,
+    },
+  );
+  assert.equal(aliasesCalled, false);
+});
+
+test('unreadable TNS file fails before listing aliases', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'oracle-tns-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'tnsnames.ora');
+  await writeFile(path, 'X=...');
+
+  try {
+    await chmod(path, 0o000);
+    const readable = await access(path, constants.R_OK).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EACCES' && error.code !== 'EPERM') {
+          throw error;
+        }
+        return false;
+      },
+    );
+    if (readable) {
+      t.skip('Process can read the file despite removed read permissions.');
+      return;
+    }
+
+    let aliasesCalled = false;
+    await assert.rejects(
+      resolveConnectionOptions({ tnsnames: path, tnsAlias: 'X' }, async () => {
+        aliasesCalled = true;
+        return ['X'];
+      }),
+      {
+        message: `TNS file is missing, unreadable, or not a regular file: ${path}.`,
+      },
+    );
+    assert.equal(aliasesCalled, false);
+  } finally {
+    await chmod(path, 0o600);
+  }
+});
+
+test('alias loader failure reports the TNS path', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'oracle-tns-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'tnsnames.ora');
+  await writeFile(path, 'X=...');
+
+  await assert.rejects(
+    resolveConnectionOptions({ tnsnames: path, tnsAlias: 'X' }, async () => {
+      throw new Error('Alias loader failed');
+    }),
+    { message: `Unable to read TNS aliases from ${path}.` },
   );
 });
 
