@@ -10,10 +10,12 @@ export const identifierSchema = z
       Buffer.byteLength(value, 'utf8') <= 128 && !/[\x00-\x1f]/u.test(value),
     'Invalid Oracle identifier',
   );
+
 export const objectReferenceSchema = z
   .object({ owner: identifierSchema, name: identifierSchema })
   .strict();
 export type ObjectReference = z.infer<typeof objectReferenceSchema>;
+
 export const selectionSchema = z
   .object({
     version: z.literal(2),
@@ -37,29 +39,31 @@ export const diagnosticSchema = z
   .strict();
 export type Diagnostic = z.infer<typeof diagnosticSchema>;
 
+const columnDataTypeSchema = z
+  .object({
+    name: z.string(),
+    owner: z.string().nullable(),
+    byteLength: z.number().int().nonnegative(),
+    characterLength: z.number().int().nonnegative(),
+    lengthSemantics: z.enum(['BYTE', 'CHAR']).nullable(),
+    precision: z.number().int().nullable(),
+    scale: z.number().int().nullable(),
+  })
+  .strict();
+
 export const columnSchema = z
   .object({
     name: identifierSchema,
     position: z.number().int().positive(),
     comment: z.string().nullable(),
     // Preserve Oracle's own type identity and parameters; do not map to JS types.
-    dataType: z
-      .object({
-        name: z.string(),
-        owner: z.string().nullable(),
-        byteLength: z.number().int().nonnegative(),
-        characterLength: z.number().int().nonnegative(),
-        lengthSemantics: z.enum(['BYTE', 'CHAR']).nullable(),
-        precision: z.number().int().nullable(),
-        scale: z.number().int().nullable(),
-      })
-      .strict(),
+    dataType: columnDataTypeSchema,
     nullable: z.boolean(),
     defaultExpression: z.string().nullable(),
     defaultOnNull: z.boolean(),
     virtual: z.boolean(),
     invisible: z.boolean(),
-    // Identity metadata is retained even when the current generator cannot emit it.
+    // Preserve raw identity metadata; the renderer validates supported options.
     identity: z
       .object({ generation: z.string(), options: z.string() })
       .strict()
@@ -78,11 +82,20 @@ const constraintStateSchema = z
     rely: z.boolean(),
   })
   .strict();
+
 const constraintProperties = {
   name: identifierSchema,
   generatedName: z.boolean(),
   state: constraintStateSchema,
 };
+
+const foreignKeyColumnPairSchema = z
+  .object({
+    childColumn: identifierSchema,
+    parentColumn: identifierSchema,
+  })
+  .strict();
+
 export const constraintSchema = z.discriminatedUnion('kind', [
   z
     .object({
@@ -120,16 +133,7 @@ export const constraintSchema = z.discriminatedUnion('kind', [
       kind: z.literal('foreign-key'),
       parentTable: objectReferenceSchema,
       parentConstraint: objectReferenceSchema,
-      columnPairs: z
-        .array(
-          z
-            .object({
-              childColumn: identifierSchema,
-              parentColumn: identifierSchema,
-            })
-            .strict(),
-        )
-        .min(1),
+      columnPairs: z.array(foreignKeyColumnPairSchema).min(1),
       onDelete: z.enum(['NO ACTION', 'CASCADE', 'SET NULL']),
     })
     .strict(),
@@ -139,6 +143,14 @@ export type ForeignKeyDefinition = Extract<
   ConstraintDefinition,
   { kind: 'foreign-key' }
 >;
+
+const indexKeySchema = z
+  .object({
+    column: z.string().nullable(),
+    expression: z.string().nullable(),
+    direction: z.enum(['ASC', 'DESC']),
+  })
+  .strict();
 
 export const indexSchema = z
   .object({
@@ -150,17 +162,7 @@ export const indexSchema = z
     partitioned: z.boolean(),
     // Compression is a recorded source fact, explicitly omitted by target policy.
     compression: z.string(),
-    keys: z
-      .array(
-        z
-          .object({
-            column: z.string().nullable(),
-            expression: z.string().nullable(),
-            direction: z.enum(['ASC', 'DESC']),
-          })
-          .strict(),
-      )
-      .min(1),
+    keys: z.array(indexKeySchema).min(1),
   })
   .strict();
 export type IndexDefinition = z.infer<typeof indexSchema>;
@@ -184,6 +186,7 @@ export const tableSchema = z
   })
   .strict();
 export type TableDefinition = z.infer<typeof tableSchema>;
+
 export const viewDependencySchema = z
   .object({
     reference: objectReferenceSchema,
@@ -192,6 +195,7 @@ export const viewDependencySchema = z
   })
   .strict();
 export type ViewDependency = z.infer<typeof viewDependencySchema>;
+
 export const viewSchema = z
   .object({
     reference: objectReferenceSchema,
@@ -223,6 +227,7 @@ export const prerequisiteSchema = z
   })
   .strict();
 export type Prerequisite = z.infer<typeof prerequisiteSchema>;
+
 const commonDocumentProperties = {
   formatVersion: z.literal(4, {
     errorMap: () => ({
@@ -240,6 +245,7 @@ const commonDocumentProperties = {
   prerequisites: z.array(prerequisiteSchema),
   diagnostics: z.array(diagnosticSchema),
 };
+
 export const sourceDocumentSchema = z
   .object({ ...commonDocumentProperties, kind: z.literal('source') })
   .strict();
@@ -262,6 +268,7 @@ export const policySchema = z
   })
   .strict();
 export type TargetPolicy = z.infer<typeof policySchema>;
+
 export const targetDocumentSchema = z
   .object({
     ...commonDocumentProperties,
@@ -275,21 +282,25 @@ export type TargetDocument = z.infer<typeof targetDocumentSchema>;
 export function objectKey(reference: ObjectReference): string {
   return JSON.stringify([reference.owner, reference.name]);
 }
+
 export function quoteIdentifier(name: string): string {
   identifierSchema.parse(name);
   return `"${name.replaceAll('"', '""')}"`;
 }
+
 export function qualifiedName(reference: ObjectReference): string {
   return `${quoteIdentifier(reference.owner)}.${quoteIdentifier(reference.name)}`;
 }
+
 export function uniqueReferences(
   references: ObjectReference[],
 ): ObjectReference[] {
-  return [
-    ...new Map(
-      references.map((reference) => [objectKey(reference), reference]),
-    ).entries(),
-  ]
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([, reference]) => reference);
+  // Keep the last reference for each key, then sort independently of locale.
+  const referencesByKey = new Map(
+    references.map((reference) => [objectKey(reference), reference]),
+  );
+  const sortedEntries = [...referencesByKey.entries()].sort(
+    ([left], [right]) => (left < right ? -1 : left > right ? 1 : 0),
+  );
+  return sortedEntries.map(([, reference]) => reference);
 }
