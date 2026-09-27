@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import type { Connection } from 'oracledb';
 import { OracleCatalog } from '../src/catalog.js';
 import { extractSource } from '../src/extract.js';
-import { ExtractionProgress, type ProgressEvent } from '../src/progress.js';
+import {
+  ExtractionProgress,
+  progressErrorCode,
+  type ProgressEvent,
+} from '../src/progress.js';
 import { benchmarkConnection } from './helpers/benchmark-catalog.js';
 
 const selection = {
@@ -18,6 +22,97 @@ const workload = {
   viewDepth: 0,
   latencyMs: 0,
 };
+
+test('progress error codes allow only known catalog codes', () => {
+  for (const code of [
+    'CATALOG_UNKNOWN_VALUE',
+    'CATALOG_CARDINALITY',
+    'CATALOG_INCOMPLETE_METADATA',
+  ]) {
+    assert.equal(progressErrorCode({ code }), code);
+  }
+  for (const error of [
+    null,
+    undefined,
+    false,
+    42,
+    'CATALOG_UNKNOWN_VALUE',
+    {},
+    new Error('private driver message'),
+    { code: 'ORA-01017' },
+    { code: 123 },
+  ]) {
+    assert.equal(progressErrorCode(error), 'EXTRACTION_FAILED');
+  }
+});
+
+test('row-count failures preserve success and omit rows from completion', async () => {
+  const events: ProgressEvent[] = [];
+  const progress = new ExtractionProgress((event) => events.push(event));
+  const value = [{ name: 'T' }];
+  const secret = 'private row-count error';
+  let countedValue: typeof value | undefined;
+  const result = await progress.measure(
+    'query',
+    async () => value,
+    { queryCategory: 'table' },
+    (rows) => {
+      countedValue = rows;
+      throw new Error(secret);
+    },
+  );
+
+  assert.equal(result, value);
+  assert.equal(countedValue, value);
+  assert.deepEqual(
+    events.map((event) => event.event),
+    ['start', 'complete'],
+  );
+  assert.ok(events.every((event) => !('rows' in event) && !('errorCode' in event)));
+  assert.ok(!JSON.stringify(events).includes(secret));
+});
+
+test('row counting is skipped without an observer', async () => {
+  const progress = new ExtractionProgress();
+  const value = ['T'];
+  let counted = false;
+  const result = await progress.measure('query', async () => value, {}, () => {
+    counted = true;
+    return value.length;
+  });
+
+  assert.equal(result, value);
+  assert.equal(counted, false);
+});
+
+test('operation failures skip row counting and preserve the original error', async () => {
+  const events: ProgressEvent[] = [];
+  const progress = new ExtractionProgress((event) => events.push(event));
+  const original = new Error('operation failed');
+  let counted = false;
+  await assert.rejects(
+    progress.measure(
+      'query',
+      async () => {
+        throw original;
+      },
+      {},
+      () => {
+        counted = true;
+        return 0;
+      },
+    ),
+    (error) => error === original,
+  );
+
+  assert.equal(counted, false);
+  assert.deepEqual(
+    events.map((event) => event.event),
+    ['start', 'failure'],
+  );
+  assert.equal(events[1].errorCode, 'EXTRACTION_FAILED');
+  assert.ok(!('rows' in events[1]));
+});
 
 test('opt-in events preserve metadata, report ordered query timing and row counts under one run', async () => {
   const events: ProgressEvent[] = [];

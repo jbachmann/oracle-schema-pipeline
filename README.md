@@ -206,6 +206,8 @@ are included intentionally. Events are separate from semantic diagnostics and
 source/target formats are unchanged. Library callers can share an optional
 `ExtractionProgress(callback)` between `OracleCatalog` and `extractSource`;
 synchronous observer exceptions are ignored so telemetry cannot alter extraction.
+If a library caller's row-count callback throws, the operation still completes
+successfully and its completion event omits `rows`; the reporting error is not exposed.
 
 Constraint member reads and index key/expression reads use sequential batches of
 up to 32 exact owner/name pairs, within each table's selected metadata. FK member
