@@ -1,6 +1,7 @@
 import { ExtractionProgress, progressErrorCode } from './progress.js';
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
+import type { ZodType, ZodTypeDef } from 'zod';
 import {
   sourceDocumentSchema,
   selectionSchema,
@@ -28,6 +29,36 @@ const progress = new ExtractionProgress((event) => {
 async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, 'utf8'));
 }
+
+async function readValidatedJson<T>(
+  path: string,
+  label: 'source' | 'policy',
+  schema: ZodType<T, ZodTypeDef, unknown>,
+): Promise<T> {
+  let input: unknown;
+  try {
+    input = await readJson(path);
+  } catch (error) {
+    if (error instanceof SyntaxError)
+      throw new Error(
+        `Invalid ${label} file ${JSON.stringify(path)}: malformed JSON.`,
+      );
+    throw new Error(`Could not read ${label} file ${JSON.stringify(path)}.`, {
+      cause: error,
+    });
+  }
+  const result = schema.safeParse(input);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((issue) => `  ${issue.path.join('.') || '<root>'}: ${issue.message}`)
+      .join('\n');
+    throw new Error(
+      `Invalid ${label} file ${JSON.stringify(path)}: unexpected document shape.\n${issues}`,
+    );
+  }
+  return result.data;
+}
+
 function requireOption(value: string | undefined, name: string): string {
   if (!value) throw new Error(`Missing --${name}. See --help.`);
   return value;
@@ -69,7 +100,8 @@ Password: hidden prompt or ORACLE_PASSWORD.
 Transform also writes <output>.report.json unless --report is supplied.
 Transform publishes <output>.complete.json last; use --completion to choose its path.
 All file outputs accept --temp-dir (default: .oracle-schema-tmp under the current working directory).
-Validation errors use exit code 2; unsupported models never produce SQL.`);
+Invalid input files use exit code 1; semantic validation errors use exit code 2.
+Unsupported models never produce SQL.`);
     return;
   }
   if (positionals.length !== 1) throw new Error('Supply exactly one command.');
@@ -169,12 +201,14 @@ Validation errors use exit code 2; unsupported models never produce SQL.`);
     );
     console.log(`Wrote ${values.output}.`);
   } else if (command === 'transform') {
-    const source = sourceDocumentSchema.parse(
-      await readJson(requireOption(values.input, 'input')),
+    const source = await readValidatedJson(
+      requireOption(values.input, 'input'),
+      'source',
+      sourceDocumentSchema,
     );
-    const policy = policySchema.parse(
-      values.policy ? await readJson(values.policy) : {},
-    );
+    const policy = values.policy
+      ? await readValidatedJson(values.policy, 'policy', policySchema)
+      : policySchema.parse({});
     const target = transformSource(source, policy);
     const report = transformationReport(target);
     await publishArtifacts(

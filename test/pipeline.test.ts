@@ -67,7 +67,7 @@ test('one-hop extraction captures parent FK facts but never fetches grandparent 
 test('transformation removes only parent-origin FKs and does not mutate source', () => {
   const source = sourceFixture(),
     before = JSON.stringify(source),
-    target = transformSource(source);
+    target = transformSource(source, policySchema.parse({}));
   assert.equal(JSON.stringify(source), before);
   assert.deepEqual(
     target.tables.flatMap((table) =>
@@ -91,12 +91,14 @@ test('explicit second target retains its FK and requires its direct parent defin
   const grandparent = ordinaryTable('OTHER', 'GRANDPARENT');
   grandparent.role = 'direct-parent';
   source.tables.push(grandparent);
-  const target = transformSource(source);
+  const target = transformSource(source, policySchema.parse({}));
   assert.equal(validateTarget(target).length, 0);
   assert.ok(generateSql(target).includes('FK_PARENT_GRANDPARENT'));
 });
 test('generation orders all tables, indexes, candidate keys and FKs; composite order preserved', () => {
-  const sql = generateSql(transformSource(sourceFixture()));
+  const sql = generateSql(
+    transformSource(sourceFixture(), policySchema.parse({})),
+  );
   assert.ok(
     sql.lastIndexOf('CREATE TABLE') < sql.indexOf('CREATE UNIQUE INDEX'),
   );
@@ -135,7 +137,7 @@ test('comments pass through and render exactly before indexes', () => {
   const source = sourceFixture();
   source.tables[0].comment = "Customer's orders & returns Ω";
   source.tables[0].columns[0].comment = 'first line\nsecond line';
-  const target = transformSource(source);
+  const target = transformSource(source, policySchema.parse({}));
   assert.equal(target.tables[0].comment, source.tables[0].comment);
   assert.equal(
     target.tables[0].columns[0].comment,
@@ -153,7 +155,7 @@ test('comments pass through and render exactly before indexes', () => {
   );
 });
 test('null comments are omitted and long comments use bounded dynamic DDL', () => {
-  const target = transformSource(sourceFixture());
+  const target = transformSource(sourceFixture(), policySchema.parse({}));
   target.tables[0].comment = 'x'.repeat(3999);
   const sql = generateSql(target);
   assert.ok(sql.includes('EXECUTE IMMEDIATE'));
@@ -163,11 +165,11 @@ test('null comments are omitted and long comments use bounded dynamic DDL', () =
   );
 });
 test('missing parent or mismatched ordered parent key blocks SQL', () => {
-  const target = transformSource(sourceFixture());
+  const target = transformSource(sourceFixture(), policySchema.parse({}));
   target.tables.pop();
   assert.ok(hasError(target, 'MISSING_PARENT'));
   assert.throws(() => generateSql(target), /MISSING_PARENT/);
-  const mismatch = transformSource(sourceFixture());
+  const mismatch = transformSource(sourceFixture(), policySchema.parse({}));
   const foreignKey = mismatch.tables[0].constraints.find(
     (constraint) => constraint.kind === 'foreign-key',
   )!;
@@ -175,12 +177,12 @@ test('missing parent or mismatched ordered parent key blocks SQL', () => {
   assert.ok(hasError(mismatch, 'MISSING_PARENT_KEY'));
 });
 test('parent-only FKs cannot be restored manually without validation failure', () => {
-  const target = transformSource(sourceFixture());
+  const target = transformSource(sourceFixture(), policySchema.parse({}));
   target.tables[1].constraints.push(fk('FK_BACK', target.tables[0].reference));
   assert.ok(hasError(target, 'PARENT_FK_RETAINED'));
 });
 test('missing backing indexes and duplicate schema constraint names are rejected', () => {
-  const target = transformSource(sourceFixture());
+  const target = transformSource(sourceFixture(), policySchema.parse({}));
   target.tables[0].indexes = [];
   assert.ok(hasError(target, 'MISSING_BACKING_INDEX'));
   target.tables[0].constraints.push(
@@ -189,7 +191,7 @@ test('missing backing indexes and duplicate schema constraint names are rejected
   assert.ok(hasError(target, 'DUPLICATE_CONSTRAINT'));
 });
 test('deferrable FK, delete action, disabled and validation state survive generation', () => {
-  const target = transformSource(sourceFixture());
+  const target = transformSource(sourceFixture(), policySchema.parse({}));
   const constraint = target.tables[0].constraints.find(
     (constraint) => constraint.kind === 'foreign-key',
   )!;
@@ -210,7 +212,7 @@ test('deferrable FK, delete action, disabled and validation state survive genera
   );
 });
 test('defaults and named not-null constraints are emitted once, including DEFAULT ON NULL', () => {
-  const target = transformSource(sourceFixture()),
+  const target = transformSource(sourceFixture(), policySchema.parse({})),
     table = target.tables[0],
     column = numberColumn('VALUE', 3);
   column.defaultExpression = '42';
@@ -247,7 +249,7 @@ test('NUMBER negative scale and CHAR/BYTE semantics are preserved', () => {
   assert.equal(renderDataType(column, policy), 'VARCHAR2(400 BYTE)');
 });
 test('unsupported identity, specialized tables and internal index expressions block generation', () => {
-  const target = transformSource(sourceFixture());
+  const target = transformSource(sourceFixture(), policySchema.parse({}));
   target.tables[0].columns[0].identity = {
     generation: 'ALWAYS',
     options: 'START WITH: 1',
@@ -271,13 +273,21 @@ test('external prerequisites must be acknowledged and schemas preprovisioned', (
     type: 'SEQUENCE',
     databaseLink: null,
   });
-  assert.ok(hasError(transformSource(source), 'UNACKNOWLEDGED_PREREQUISITE'));
-  const target = transformSource(source, {
-    createSchemas: false,
-    externalPrerequisites: [
-      { reference: { owner: 'APP', name: 'NEXT_VALUE' }, type: 'SEQUENCE' },
-    ],
-  });
+  assert.ok(
+    hasError(
+      transformSource(source, policySchema.parse({})),
+      'UNACKNOWLEDGED_PREREQUISITE',
+    ),
+  );
+  const target = transformSource(
+    source,
+    policySchema.parse({
+      createSchemas: false,
+      externalPrerequisites: [
+        { reference: { owner: 'APP', name: 'NEXT_VALUE' }, type: 'SEQUENCE' },
+      ],
+    }),
+  );
   assert.equal(validateTarget(target).length, 0);
   assert.ok(!generateSql(target).includes('CREATE USER'));
 });
@@ -294,13 +304,13 @@ test('quoted identifiers and SQL fragments remain intact', () => {
     generatedName: false,
     state: { ...enabledState },
   });
-  const sql = generateSql(transformSource(source));
+  const sql = generateSql(transformSource(source, policySchema.parse({})));
   assert.ok(sql.includes('"Odd""Name" NUMBER'));
   assert.ok(sql.includes(column.defaultExpression));
   assert.ok(sql.includes('CHECK ("Odd""Name" >= 0)'));
 });
 test('function indexes and virtual columns keep their expressions', () => {
-  const target = transformSource(sourceFixture()),
+  const target = transformSource(sourceFixture(), policySchema.parse({})),
     table = target.tables[0];
   const virtual = numberColumn('DOUBLE_ID', 3);
   virtual.virtual = true;
@@ -319,7 +329,10 @@ test('function indexes and virtual columns keep their expressions', () => {
   assert.ok(sql.includes('(ABS("ID") ASC)'));
 });
 test('deterministic offline output and repeated JSON round trips', () => {
-  const target = transformSource(JSON.parse(JSON.stringify(sourceFixture())));
+  const target = transformSource(
+    sourceDocumentSchema.parse(JSON.parse(JSON.stringify(sourceFixture()))),
+    policySchema.parse({}),
+  );
   assert.equal(
     generateSql(target),
     generateSql(JSON.parse(JSON.stringify(target))),
@@ -327,7 +340,7 @@ test('deterministic offline output and repeated JSON round trips', () => {
 });
 
 test('identity options preserve large numeric bounds and never emit the source sequence default', () => {
-  const target = transformSource(sourceFixture()),
+  const target = transformSource(sourceFixture(), policySchema.parse({})),
     column = target.tables[0].columns[1];
   column.identity = {
     generation: 'BY DEFAULT',
@@ -342,7 +355,7 @@ test('identity options preserve large numeric bounds and never emit the source s
   assert.ok(!sql.includes('ISEQ$$_123'));
 });
 test('dollar replacement patterns in quoted index names remain literal', () => {
-  const target = transformSource(sourceFixture()),
+  const target = transformSource(sourceFixture(), policySchema.parse({})),
     table = target.tables[0];
   table.indexes[0].reference.name = 'IX$&$1';
   const key = table.constraints.find(
@@ -394,7 +407,7 @@ test('modeled view facts block generation independently of annotations', () => {
       ],
     ];
   for (const [code, mutate] of mutations) {
-    const target = transformSource(sourceFixture()),
+    const target = transformSource(sourceFixture(), policySchema.parse({})),
       view = ordinaryView('V');
     mutate(view);
     target.views = [view];
@@ -414,7 +427,7 @@ test('modeled view facts block generation independently of annotations', () => {
 });
 
 test('unreachable views and retained nonroot FKs cannot expand the closure', () => {
-  const target = transformSource(sourceFixture()),
+  const target = transformSource(sourceFixture(), policySchema.parse({})),
     view = ordinaryView('EXTRA');
   const extra = ordinaryTable('APP', 'EXTRA_TABLE');
   extra.role = 'view-dependency';
@@ -432,7 +445,7 @@ test('unreachable views and retained nonroot FKs cannot expand the closure', () 
 });
 
 test('view diamonds, duplicate edges, mixed table roles and shuffles are deterministic', () => {
-  const target = transformSource(sourceFixture());
+  const target = transformSource(sourceFixture(), policySchema.parse({}));
   const views = ['ROOT', 'a', 'Z', 'BASE'].map(ordinaryView);
   for (const view of views.slice(1)) view.role = 'dependency';
   const edge = (view: (typeof views)[number]) => ({
@@ -471,7 +484,7 @@ test('view diamonds, duplicate edges, mixed table roles and shuffles are determi
 });
 
 test('missing roots, missing view edges and cycles remain blocking', () => {
-  const target = transformSource(sourceFixture()),
+  const target = transformSource(sourceFixture(), policySchema.parse({})),
     view = ordinaryView('V');
   target.targetViews = [view.reference];
   assert.ok(hasError(target, 'MISSING_TARGET'));
@@ -491,7 +504,7 @@ test('missing roots, missing view edges and cycles remain blocking', () => {
 
 test('timestamp precision boundaries and inconsistent metadata are checked before rendering', () => {
   for (const scale of [-1, 0, 9, 10, 99]) {
-    const target = transformSource(sourceFixture()),
+    const target = transformSource(sourceFixture(), policySchema.parse({})),
       column = numberColumn('TS', 3);
     column.nullable = true;
     column.dataType.name = 'TIMESTAMP';
@@ -530,7 +543,7 @@ test('view-only table dependencies are accepted without expanding their foreign 
       databaseLink: null,
     },
   ];
-  const target = transformSource(source);
+  const target = transformSource(source, policySchema.parse({}));
   assert.deepEqual(validateTarget(target), []);
   assert.ok(!generateSql(target).includes('GRANDPARENT'));
   target.views[0].dependencies[0].databaseLink = 'REMOTE';
@@ -546,7 +559,7 @@ test('CLI rejects an invalid target before creating SQL', async () => {
   const { promisify } = await import('node:util');
   const directory = await mkdtemp(join(tmpdir(), 'semantic-validation-'));
   try {
-    const target = transformSource(sourceFixture());
+    const target = transformSource(sourceFixture(), policySchema.parse({}));
     const view = ordinaryView('UNRELATED');
     view.role = 'dependency';
     target.views.push(view);
@@ -581,7 +594,7 @@ test('v4 view text owns restriction syntax and v3 requires re-extraction', () =>
     view.checkOption = restriction === 'CHECK OPTION' ? 'CASCADED' : 'NONE';
     source.views = [view];
     source.targetViews = [view.reference];
-    const target = transformSource(source);
+    const target = transformSource(source, policySchema.parse({}));
     assert.equal(
       generateSql(target).split(`WITH ${restriction}`).length - 1,
       1,
@@ -652,14 +665,17 @@ test('view extraction visits diamond dependencies once and stops at base tables'
   const source = await extractSource(catalog, selection);
   assert.deepEqual(visits.sort(), ['BASE', 'LEFT', 'RIGHT', 'ROOT']);
   assert.equal(source.tables[0].role, 'view-dependency');
-  assert.deepEqual(validateTarget(transformSource(source)), []);
+  assert.deepEqual(
+    validateTarget(transformSource(source, policySchema.parse({}))),
+    [],
+  );
   // Cycles terminate extraction, but cannot be reconstructed as conventional views.
   views[3].dependencies = [edge(0)];
   visits.length = 0;
   const cyclic = await extractSource(catalog, selection);
   assert.equal(visits.length, 4);
   assert.throws(
-    () => generateSql(transformSource(cyclic)),
+    () => generateSql(transformSource(cyclic, policySchema.parse({}))),
     /VIEW_DEPENDENCY_CYCLE/,
   );
 });
@@ -673,7 +689,7 @@ test('table FK cycles remain valid when both tables are explicit targets', () =>
     (item) => item.kind !== 'foreign-key',
   );
   parent.constraints.push(fk('FK_PARENT_CHILD', child.reference));
-  const target = transformSource(source);
+  const target = transformSource(source, policySchema.parse({}));
   assert.deepEqual(validateTarget(target), []);
   const sql = generateSql(target);
   assert.equal((sql.match(/FOREIGN KEY/g) ?? []).length, 2);
@@ -692,7 +708,7 @@ for (const character of ['x', 'Ω', '😀']) {
       character.repeat(Math.floor(available / width)) +
       'x'.repeat(available % width);
     source.tables[0].columns[0].defaultExpression = `'${content}'`;
-    const boundary = transformSource(source);
+    const boundary = transformSource(source, policySchema.parse({}));
     assert.deepEqual(validateTarget(boundary), []);
     assert.ok(
       generateSql(boundary)
@@ -700,7 +716,7 @@ for (const character of ['x', 'Ω', '😀']) {
         .some((line) => Buffer.byteLength(line, 'utf8') === 2400),
     );
     source.tables[0].columns[0].defaultExpression = `'${content}x'`;
-    const target = transformSource(source);
+    const target = transformSource(source, policySchema.parse({}));
     const expected = [
       {
         severity: 'error',
@@ -725,7 +741,7 @@ for (const character of ['x', 'Ω', '😀']) {
 }
 
 test('preflight measures physical lines rather than complete expressions', () => {
-  const target = transformSource(sourceFixture());
+  const target = transformSource(sourceFixture(), policySchema.parse({}));
   target.tables[0].columns[0].defaultExpression = Array.from(
     { length: 10 },
     () => "'" + 'x'.repeat(1000) + "'",
@@ -740,7 +756,7 @@ test('preflight names views, indexes and constraints and retains other semantic 
   view.query = `SELECT '${'x'.repeat(2400)}' FROM DUAL`;
   source.views = [view];
   source.targetViews = [view.reference];
-  const target = transformSource(source);
+  const target = transformSource(source, policySchema.parse({}));
   const table = target.tables[0];
   table.indexes.push({
     ...structuredClone(table.indexes[0]),
@@ -778,7 +794,7 @@ test('preflight accounts for quoted identifier expansion in wide view headers', 
   view.columns = Array.from({ length: 20 }, (_, i) => `${i}${'"'.repeat(120)}`);
   source.views = [view];
   source.targetViews = [view.reference];
-  const target = transformSource(source);
+  const target = transformSource(source, policySchema.parse({}));
   const diagnostics = validateTarget(target);
   assert.equal(diagnostics.length, 1);
   assert.equal(diagnostics[0].code, 'SQL_LINE_LIMIT');
@@ -787,7 +803,7 @@ test('preflight accounts for quoted identifier expansion in wide view headers', 
 });
 
 test('comment preparation retains stable failures and checks bounded dynamic DDL', () => {
-  const target = transformSource(sourceFixture());
+  const target = transformSource(sourceFixture(), policySchema.parse({}));
   target.tables[0].comment = 'x'.repeat(2400);
   target.tables[0].columns[0].comment = "Ω\n'".repeat(800);
   assert.deepEqual(validateTarget(target), []);
@@ -810,7 +826,7 @@ test('comment preparation retains stable failures and checks bounded dynamic DDL
 
 test('invalid index keys produce diagnostics without aborting validation', () => {
   for (const column of [null, '', 'x'.repeat(129)]) {
-    const target = transformSource(sourceFixture());
+    const target = transformSource(sourceFixture(), policySchema.parse({}));
     target.tables[0].indexes[0].keys[0] = {
       column,
       expression: null,
@@ -823,8 +839,8 @@ test('invalid index keys produce diagnostics without aborting validation', () =>
   }
 });
 
-test('every public preflight boundary strictly parses unknown input', () => {
-  const target = transformSource(sourceFixture());
+test('validation and generation boundaries strictly parse unknown input', () => {
+  const target = transformSource(sourceFixture(), policySchema.parse({}));
   for (const input of [
     null,
     '{',
@@ -834,7 +850,6 @@ test('every public preflight boundary strictly parses unknown input', () => {
   ]) {
     for (const boundary of [validateTarget, assertValidTarget, generateSql])
       assert.throws(() => boundary(input));
-    assert.throws(() => transformSource(input));
   }
   const before = structuredClone(target);
   validateTarget(target);

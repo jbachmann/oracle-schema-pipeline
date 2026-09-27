@@ -19,7 +19,11 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import oracle from 'oracledb';
-import { targetDocumentSchema, type TargetDocument } from '../../src/model.js';
+import {
+  policySchema,
+  targetDocumentSchema,
+  type TargetDocument,
+} from '../../src/model.js';
 
 import { comparableExpression as normalizeExpression } from '../helpers/sql-comparison.js';
 const schemas = ['IAM', 'CATALOG', 'COMMERCE', 'FINANCE'];
@@ -440,7 +444,7 @@ test(
         views: cases.map(({ name }) => ({ owner, name })),
       });
       const workbook = buildDictionaryWorkbook(source).getWorksheet('Views')!;
-      const sql = generateSql(transformSource(source));
+      const sql = generateSql(transformSource(source, policySchema.parse({})));
       for (const item of cases) {
         const view = source.views.find(
           (view) => view.reference.name === item.name,

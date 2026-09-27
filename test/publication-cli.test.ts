@@ -1,10 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm } from 'node:fs/promises';
+import {
+  access,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { policySchema } from '../src/model.js';
 
 const execute = promisify(execFile);
 const cli = resolve('src/cli.ts');
@@ -63,6 +72,13 @@ for (const custom of [false, true]) {
       ];
       if (custom)
         args.push('--report', 'changes.json', '--completion', 'finished.json');
+      if (custom) {
+        await writeFile(
+          join(directory, 'policy.json'),
+          JSON.stringify({ maxStringSize: 'EXTENDED' }),
+        );
+        args.push('--policy', 'policy.json');
+      }
       await execute(process.execPath, args, { cwd: directory });
       await verifyCompletion(
         join(directory, custom ? 'finished.json' : 'target.json.complete.json'),
@@ -79,6 +95,10 @@ for (const custom of [false, true]) {
       );
       const target = JSON.parse(
         await readFile(join(directory, 'target.json'), 'utf8'),
+      );
+      assert.deepEqual(
+        target.policy,
+        policySchema.parse(custom ? { maxStringSize: 'EXTENDED' } : {}),
       );
       const { generateSql } = await import('../src/generate.js');
       await execute(
@@ -103,6 +123,93 @@ for (const custom of [false, true]) {
       await rm(directory, { recursive: true, force: true });
     }
   });
+}
+
+for (const label of ['source', 'policy'] as const) {
+  for (const scenario of [
+    'malformed JSON',
+    'wrong type',
+    'unknown field',
+    'wrong version',
+  ]) {
+    test(`transform rejects ${label} with ${scenario} before publishing`, async () => {
+      const directory = await mkdtemp(
+        join(tmpdir(), 'publication-invalid-input-'),
+      );
+      try {
+        const document =
+          label === 'source' ? JSON.parse(await readFile(source, 'utf8')) : {};
+        let contents: string;
+        let expectedIssue: RegExp;
+        if (scenario === 'malformed JSON') {
+          contents = '{';
+          expectedIssue = /malformed JSON/;
+        } else if (scenario === 'wrong type') {
+          if (label === 'source') document.tables[0].columns = null;
+          else document.createSchemas = 'yes';
+          contents = JSON.stringify(document);
+          expectedIssue =
+            label === 'source'
+              ? /tables\.0\.columns: Expected array/
+              : /createSchemas: Expected boolean/;
+        } else if (scenario === 'unknown field') {
+          document.unexpected = true;
+          contents = JSON.stringify(document);
+          expectedIssue = /Unrecognized key.*unexpected/;
+        } else {
+          document[label === 'source' ? 'formatVersion' : 'version'] = 999;
+          contents = JSON.stringify(document);
+          expectedIssue =
+            label === 'source'
+              ? /formatVersion: Expected format v4; re-extract older artifacts/
+              : /version: Invalid literal value/;
+        }
+        const path = `${label}.json`;
+        await writeFile(join(directory, path), contents);
+        const args = [
+          '--import',
+          tsx,
+          cli,
+          'transform',
+          '--input',
+          label === 'source' ? path : source,
+          '--output',
+          'target.json',
+        ];
+        if (label === 'policy') args.push('--policy', path);
+        await assert.rejects(
+          execute(process.execPath, args, { cwd: directory }),
+          (error: unknown) => {
+            const failure = error as {
+              code: number;
+              stderr: string;
+              stdout: string;
+            };
+            assert.equal(failure.code, 1);
+            assert.ok(
+              failure.stderr.includes(`Invalid ${label} file "${path}"`),
+            );
+            assert.match(failure.stderr, expectedIssue);
+            if (scenario !== 'malformed JSON')
+              assert.match(failure.stderr, /unexpected document shape/);
+            assert.equal(failure.stdout, '');
+            return true;
+          },
+        );
+        for (const artifact of [
+          'target.json',
+          'target.json.report.json',
+          'target.json.complete.json',
+        ]) {
+          await assert.rejects(access(join(directory, artifact)), {
+            code: 'ENOENT',
+          });
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+  }
 }
 
 for (const conflict of [

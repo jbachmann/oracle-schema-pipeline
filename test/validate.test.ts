@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { policySchema } from '../src/model.js';
 import { validateTarget } from '../src/validate.js';
 import { transformSource } from '../src/transform.js';
 import { ordinaryTable, sourceFixture } from './fixtures.js';
@@ -12,7 +13,7 @@ test('backing indexes must match every constraint column in order', () => {
     ['TENANT_ID', 'ID', 'TENANT_ID'],
     [null, 'ID'],
   ]) {
-    const target = transformSource(sourceFixture());
+    const target = transformSource(sourceFixture(), policySchema.parse({}));
     target.tables[0].indexes[0].keys = columns.map((column) => ({
       column,
       expression: column === null ? 'TENANT_ID + 1' : null,
@@ -36,7 +37,7 @@ test('index keys require exactly one non-null column or expression', () => {
     ['', null, false],
     [null, '', false],
   ] as const) {
-    const target = transformSource(sourceFixture());
+    const target = transformSource(sourceFixture(), policySchema.parse({}));
     target.tables[0].indexes[0].keys[0] = {
       column,
       expression,
@@ -57,7 +58,7 @@ test('duplicate index and constraint names are tracked across tables within each
     second.reference.name = 'SECOND';
     source.tables = [first, second];
     source.targetTables = source.tables.map((table) => table.reference);
-    const target = transformSource(source);
+    const target = transformSource(source, policySchema.parse({}));
     const expected =
       owner === 'APP'
         ? [
