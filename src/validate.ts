@@ -4,6 +4,8 @@ import {
   targetDocumentSchema,
   objectKey,
   qualifiedName,
+  type ConstraintDefinition,
+  type TableDefinition,
   type Diagnostic,
   type TargetDocument,
 } from './model.js';
@@ -24,314 +26,27 @@ function validateParsedTarget(document: TargetDocument) {
   diagnostics.push(...analysis.diagnostics);
   const { tablesByKey } = analysis;
   const targetKeys = new Set(document.targetTables.map(objectKey));
-  const constraintNames = new Set<string>(),
-    indexNames = new Set<string>();
+  const constraintNames = new Set<string>();
+  const indexNames = new Set<string>();
   for (const table of document.tables) {
     const tableName = qualifiedName(table.reference);
     const isTarget = targetKeys.has(objectKey(table.reference));
-    for (const feature of table.unsupportedFeatures)
+    for (const feature of table.unsupportedFeatures) {
       error('UNSUPPORTED_FEATURE', tableName, feature);
+    }
     const columnNames = new Set(table.columns.map((column) => column.name));
-    if (columnNames.size !== table.columns.length)
-      error('DUPLICATE_COLUMN', tableName, 'Column names must be unique.');
-    if (
-      new Set(table.columns.map((column) => column.position)).size !==
-      table.columns.length
-    )
-      error(
-        'DUPLICATE_POSITION',
-        tableName,
-        'Column positions must be unique.',
-      );
-    const indexesByKey = new Map(
-      table.indexes.map((index) => [objectKey(index.reference), index]),
+    validateColumns(table, columnNames, error);
+    validateIndexes(table, columnNames, indexNames, error);
+    validateConstraints(
+      table,
+      columnNames,
+      constraintNames,
+      tablesByKey,
+      isTarget,
+      error,
     );
-    for (const column of table.columns) {
-      if (
-        table.constraints.filter(
-          (constraint) =>
-            constraint.kind === 'not-null' && constraint.column === column.name,
-        ).length > 1
-      )
-        error(
-          'DUPLICATE_NOT_NULL',
-          tableName,
-          `Multiple NOT NULL constraints on ${column.name} need manual review.`,
-        );
-      const columnName = `${tableName}.${column.name}`;
-      if (column.collation && column.collation !== 'USING_NLS_COMP')
-        error(
-          'UNSUPPORTED_COLLATION',
-          columnName,
-          `Explicit collation ${column.collation} requires a target policy.`,
-        );
-      if (
-        column.virtual &&
-        (!column.defaultExpression || column.defaultOnNull || column.identity)
-      )
-        error(
-          'INVALID_VIRTUAL_COLUMN',
-          columnName,
-          'Virtual columns need an expression and cannot have identity/default-on-null settings.',
-        );
-      if (column.defaultOnNull && !column.defaultExpression)
-        error(
-          'MISSING_DEFAULT',
-          columnName,
-          'DEFAULT ON NULL needs an expression.',
-        );
-      if (!column.nullable && !column.identity && !column.defaultOnNull) {
-        const enforced = table.constraints.some(
-          (constraint) =>
-            constraint.state.enabled &&
-            ((constraint.kind === 'not-null' &&
-              constraint.column === column.name) ||
-              (constraint.kind === 'primary-key' &&
-                constraint.columns.includes(column.name))),
-        );
-        if (!enforced)
-          error(
-            'MISSING_NULLABILITY_CONSTRAINT',
-            columnName,
-            'Nonnullable source column has no modeled PK or NOT NULL constraint.',
-          );
-      }
-    }
-    for (const index of table.indexes) {
-      const indexName = qualifiedName(index.reference),
-        identity = objectKey(index.reference);
-      if (indexNames.has(identity))
-        error(
-          'DUPLICATE_INDEX',
-          indexName,
-          'Index names must be unique within their schema.',
-        );
-      indexNames.add(identity);
-      if (index.reference.owner !== table.reference.owner)
-        error(
-          'CROSS_OWNER_INDEX',
-          indexName,
-          'Cross-owner index recreation needs a dedicated policy.',
-        );
-      if (
-        ![
-          'NORMAL',
-          'NORMAL/REV',
-          'BITMAP',
-          'FUNCTION-BASED NORMAL',
-          'FUNCTION-BASED BITMAP',
-        ].includes(index.type) ||
-        index.partitioned
-      )
-        error(
-          'UNSUPPORTED_INDEX',
-          indexName,
-          'Only nonpartitioned conventional and function-based indexes are implemented.',
-        );
-      if (
-        index.type === 'NORMAL/REV' &&
-        index.keys.some((key) => key.expression || key.direction !== 'ASC')
-      )
-        error(
-          'UNSUPPORTED_REVERSE_KEY',
-          indexName,
-          'Reverse-key indexes must use ordinary ascending columns.',
-        );
-      if (index.status !== 'VALID')
-        error(
-          'INDEX_STATE',
-          indexName,
-          `Cannot preserve index status ${index.status}.`,
-        );
-      if (index.type.includes('BITMAP') && index.unique)
-        error('INVALID_INDEX', indexName, 'A bitmap index cannot be UNIQUE.');
-      for (const key of index.keys) {
-        if ((key.column === null) === (key.expression === null))
-          error(
-            'INVALID_INDEX_KEY',
-            indexName,
-            'Each key must specify exactly one column or SQL expression.',
-          );
-        if (key.column && !columnNames.has(key.column))
-          error(
-            'MISSING_INDEX_COLUMN',
-            indexName,
-            `Column ${key.column} is absent.`,
-          );
-        if (key.expression && /\bSYS_OP_/i.test(key.expression))
-          error(
-            'INTERNAL_INDEX_EXPRESSION',
-            indexName,
-            'Oracle internal index expressions require normalization before rendering.',
-          );
-      }
-    }
-    if (
-      table.constraints.filter(
-        (constraint) => constraint.kind === 'primary-key',
-      ).length > 1
-    )
-      error(
-        'MULTIPLE_PRIMARY_KEYS',
-        tableName,
-        'At most one primary key is allowed.',
-      );
-    for (const constraint of table.constraints) {
-      const constraintName = `${tableName}/${constraint.name}`;
-      const constraintKey = JSON.stringify([
-        table.reference.owner,
-        constraint.name,
-      ]);
-      if (constraintNames.has(constraintKey))
-        error(
-          'DUPLICATE_CONSTRAINT',
-          constraintName,
-          'Constraint names must be unique within a schema.',
-        );
-      constraintNames.add(constraintKey);
-      if (!constraint.state.deferrable && constraint.state.initiallyDeferred)
-        error(
-          'INVALID_STATE',
-          constraintName,
-          'A nondeferrable constraint cannot start deferred.',
-        );
-      const referencedColumns =
-        constraint.kind === 'not-null'
-          ? [constraint.column]
-          : constraint.kind === 'foreign-key'
-            ? constraint.columnPairs.map((pair) => pair.childColumn)
-            : constraint.kind === 'check'
-              ? []
-              : constraint.columns;
-      for (const column of referencedColumns)
-        if (!columnNames.has(column))
-          error(
-            'MISSING_CONSTRAINT_COLUMN',
-            constraintName,
-            `Column ${column} is absent.`,
-          );
-      if (new Set(referencedColumns).size !== referencedColumns.length)
-        error(
-          'DUPLICATE_KEY_COLUMN',
-          constraintName,
-          'Constraint columns must not repeat.',
-        );
-      if (
-        (constraint.kind === 'not-null' || constraint.kind === 'check') &&
-        constraint.state.deferrable
-      )
-        error(
-          'UNSUPPORTED_DEFERRAL',
-          constraintName,
-          'Deferrable check/not-null rendering is unsupported.',
-        );
-      if (constraint.kind === 'primary-key' || constraint.kind === 'unique') {
-        if (!constraint.state.enabled)
-          error(
-            'DISABLED_CANDIDATE_KEY',
-            constraintName,
-            'Disabled PK/UK index lifecycle needs a specialized renderer.',
-          );
-        if (constraint.backingIndex) {
-          const index = indexesByKey.get(objectKey(constraint.backingIndex));
-          if (!index)
-            error(
-              'MISSING_BACKING_INDEX',
-              constraintName,
-              'The supporting index is not defined on this table.',
-            );
-          else {
-            const exactColumns = index.keys.map((key) => key.column);
-            if (
-              JSON.stringify(exactColumns) !==
-                JSON.stringify(constraint.columns) ||
-              index.keys.some(
-                (key) => key.expression || key.direction !== 'ASC',
-              ) ||
-              index.type !== 'NORMAL'
-            ) {
-              error(
-                'UNSUPPORTED_BACKING_INDEX',
-                constraintName,
-                'Version 1 requires an ordinary ascending backing index with exactly the constraint columns in order.',
-              );
-            }
-            if (constraint.state.deferrable && index.unique)
-              error(
-                'INVALID_DEFERRABLE_INDEX',
-                constraintName,
-                'Deferrable PK/UK needs a nonunique backing index.',
-              );
-          }
-        }
-      }
-      if (constraint.kind === 'foreign-key') {
-        if (!isTarget)
-          error(
-            'PARENT_FK_RETAINED',
-            constraintName,
-            'Parent-only outgoing FKs must be removed by transformation.',
-          );
-        const parent = tablesByKey.get(objectKey(constraint.parentTable));
-        if (!parent) {
-          error(
-            'MISSING_PARENT',
-            constraintName,
-            'Referenced table is not in the target model.',
-          );
-          continue;
-        }
-        const candidate = parent.constraints.find(
-          (candidate) =>
-            candidate.name === constraint.parentConstraint.name &&
-            constraint.parentConstraint.owner === parent.reference.owner &&
-            ['primary-key', 'unique'].includes(candidate.kind),
-        );
-        if (
-          !candidate ||
-          !(candidate.kind === 'primary-key' || candidate.kind === 'unique') ||
-          JSON.stringify(candidate.columns) !==
-            JSON.stringify(
-              constraint.columnPairs.map((pair) => pair.parentColumn),
-            )
-        ) {
-          error(
-            'MISSING_PARENT_KEY',
-            constraintName,
-            'Referenced ordered PK/UK does not match the FK column pairs.',
-          );
-        }
-      }
-    }
   }
-  for (const prerequisite of document.prerequisites) {
-    const allowed = document.policy.externalPrerequisites.some(
-      (item) =>
-        item.type === prerequisite.type &&
-        objectKey(item.reference) === objectKey(prerequisite.reference),
-    );
-    if (prerequisite.databaseLink)
-      error(
-        'REMOTE_PREREQUISITE',
-        qualifiedName(prerequisite.requiredBy),
-        'Remote dependencies are unsupported.',
-      );
-    else if (!allowed)
-      error(
-        'UNACKNOWLEDGED_PREREQUISITE',
-        qualifiedName(prerequisite.requiredBy),
-        `Provision and acknowledge ${prerequisite.type} ${qualifiedName(prerequisite.reference)} in the target policy.`,
-      );
-  }
-  if (
-    document.policy.createSchemas &&
-    document.policy.externalPrerequisites.length
-  )
-    error(
-      'PREREQUISITE_SETUP',
-      'policy',
-      'Use createSchemas=false when prerequisite objects are provisioned in advance.',
-    );
+  validatePrerequisites(document, error);
   const preparation = prepareSql(document, analysis);
   diagnostics.push(...preparation.diagnostics);
   // Deduplicate diagnostics so repeated validation remains stable.
@@ -344,6 +59,382 @@ function validateParsedTarget(document: TargetDocument) {
     ],
   };
 }
+
+type ReportError = (code: string, object: string, message: string) => void;
+
+function validateColumns(
+  table: TableDefinition,
+  columnNames: ReadonlySet<string>,
+  error: ReportError,
+): void {
+  const tableName = qualifiedName(table.reference);
+  if (columnNames.size !== table.columns.length) {
+    error('DUPLICATE_COLUMN', tableName, 'Column names must be unique.');
+  }
+  if (
+    new Set(table.columns.map((column) => column.position)).size !==
+    table.columns.length
+  ) {
+    error('DUPLICATE_POSITION', tableName, 'Column positions must be unique.');
+  }
+  for (const column of table.columns) {
+    if (
+      table.constraints.filter(
+        (constraint) =>
+          constraint.kind === 'not-null' && constraint.column === column.name,
+      ).length > 1
+    ) {
+      error(
+        'DUPLICATE_NOT_NULL',
+        tableName,
+        `Multiple NOT NULL constraints on ${column.name} need manual review.`,
+      );
+    }
+    const columnName = `${tableName}.${column.name}`;
+    if (column.collation && column.collation !== 'USING_NLS_COMP') {
+      error(
+        'UNSUPPORTED_COLLATION',
+        columnName,
+        `Explicit collation ${column.collation} requires a target policy.`,
+      );
+    }
+    if (
+      column.virtual &&
+      (!column.defaultExpression || column.defaultOnNull || column.identity)
+    ) {
+      error(
+        'INVALID_VIRTUAL_COLUMN',
+        columnName,
+        'Virtual columns need an expression and cannot have identity/default-on-null settings.',
+      );
+    }
+    if (column.defaultOnNull && !column.defaultExpression) {
+      error(
+        'MISSING_DEFAULT',
+        columnName,
+        'DEFAULT ON NULL needs an expression.',
+      );
+    }
+    if (!column.nullable && !column.identity && !column.defaultOnNull) {
+      const enforced = table.constraints.some(
+        (constraint) =>
+          constraint.state.enabled &&
+          ((constraint.kind === 'not-null' &&
+            constraint.column === column.name) ||
+            (constraint.kind === 'primary-key' &&
+              constraint.columns.includes(column.name))),
+      );
+      if (!enforced) {
+        error(
+          'MISSING_NULLABILITY_CONSTRAINT',
+          columnName,
+          'Nonnullable source column has no modeled PK or NOT NULL constraint.',
+        );
+      }
+    }
+  }
+}
+
+function validateIndexes(
+  table: TableDefinition,
+  columnNames: ReadonlySet<string>,
+  indexNames: Set<string>,
+  error: ReportError,
+): void {
+  for (const index of table.indexes) {
+    const indexName = qualifiedName(index.reference);
+    const identity = objectKey(index.reference);
+    if (indexNames.has(identity)) {
+      error(
+        'DUPLICATE_INDEX',
+        indexName,
+        'Index names must be unique within their schema.',
+      );
+    }
+    indexNames.add(identity);
+    if (index.reference.owner !== table.reference.owner) {
+      error(
+        'CROSS_OWNER_INDEX',
+        indexName,
+        'Cross-owner index recreation needs a dedicated policy.',
+      );
+    }
+    if (
+      ![
+        'NORMAL',
+        'NORMAL/REV',
+        'BITMAP',
+        'FUNCTION-BASED NORMAL',
+        'FUNCTION-BASED BITMAP',
+      ].includes(index.type) ||
+      index.partitioned
+    ) {
+      error(
+        'UNSUPPORTED_INDEX',
+        indexName,
+        'Only nonpartitioned conventional and function-based indexes are implemented.',
+      );
+    }
+    if (
+      index.type === 'NORMAL/REV' &&
+      index.keys.some((key) => key.expression || key.direction !== 'ASC')
+    ) {
+      error(
+        'UNSUPPORTED_REVERSE_KEY',
+        indexName,
+        'Reverse-key indexes must use ordinary ascending columns.',
+      );
+    }
+    if (index.status !== 'VALID') {
+      error(
+        'INDEX_STATE',
+        indexName,
+        `Cannot preserve index status ${index.status}.`,
+      );
+    }
+    if (index.type.includes('BITMAP') && index.unique) {
+      error('INVALID_INDEX', indexName, 'A bitmap index cannot be UNIQUE.');
+    }
+    for (const key of index.keys) {
+      const hasColumn = key.column !== null;
+      const hasExpression = key.expression !== null;
+      if (hasColumn === hasExpression) {
+        error(
+          'INVALID_INDEX_KEY',
+          indexName,
+          'Each key must specify exactly one column or SQL expression.',
+        );
+      }
+      if (key.column && !columnNames.has(key.column)) {
+        error(
+          'MISSING_INDEX_COLUMN',
+          indexName,
+          `Column ${key.column} is absent.`,
+        );
+      }
+      if (key.expression && /\bSYS_OP_/i.test(key.expression)) {
+        error(
+          'INTERNAL_INDEX_EXPRESSION',
+          indexName,
+          'Oracle internal index expressions require normalization before rendering.',
+        );
+      }
+    }
+  }
+}
+
+function validateConstraints(
+  table: TableDefinition,
+  columnNames: ReadonlySet<string>,
+  constraintNames: Set<string>,
+  tablesByKey: ReadonlyMap<string, TableDefinition>,
+  isTarget: boolean,
+  error: ReportError,
+): void {
+  const tableName = qualifiedName(table.reference);
+  const indexesByKey = new Map(
+    table.indexes.map((index) => [objectKey(index.reference), index]),
+  );
+  if (
+    table.constraints.filter((constraint) => constraint.kind === 'primary-key')
+      .length > 1
+  ) {
+    error(
+      'MULTIPLE_PRIMARY_KEYS',
+      tableName,
+      'At most one primary key is allowed.',
+    );
+  }
+  for (const constraint of table.constraints) {
+    const constraintName = `${tableName}/${constraint.name}`;
+    const constraintKey = JSON.stringify([
+      table.reference.owner,
+      constraint.name,
+    ]);
+    if (constraintNames.has(constraintKey)) {
+      error(
+        'DUPLICATE_CONSTRAINT',
+        constraintName,
+        'Constraint names must be unique within a schema.',
+      );
+    }
+    constraintNames.add(constraintKey);
+    if (!constraint.state.deferrable && constraint.state.initiallyDeferred) {
+      error(
+        'INVALID_STATE',
+        constraintName,
+        'A nondeferrable constraint cannot start deferred.',
+      );
+    }
+    const referencedColumns = getConstraintColumns(constraint);
+    for (const column of referencedColumns) {
+      if (!columnNames.has(column)) {
+        error(
+          'MISSING_CONSTRAINT_COLUMN',
+          constraintName,
+          `Column ${column} is absent.`,
+        );
+      }
+    }
+    if (new Set(referencedColumns).size !== referencedColumns.length) {
+      error(
+        'DUPLICATE_KEY_COLUMN',
+        constraintName,
+        'Constraint columns must not repeat.',
+      );
+    }
+    if (
+      (constraint.kind === 'not-null' || constraint.kind === 'check') &&
+      constraint.state.deferrable
+    ) {
+      error(
+        'UNSUPPORTED_DEFERRAL',
+        constraintName,
+        'Deferrable check/not-null rendering is unsupported.',
+      );
+    }
+    if (constraint.kind === 'primary-key' || constraint.kind === 'unique') {
+      if (!constraint.state.enabled) {
+        error(
+          'DISABLED_CANDIDATE_KEY',
+          constraintName,
+          'Disabled PK/UK index lifecycle needs a specialized renderer.',
+        );
+      }
+      if (constraint.backingIndex) {
+        const index = indexesByKey.get(objectKey(constraint.backingIndex));
+        if (!index) {
+          error(
+            'MISSING_BACKING_INDEX',
+            constraintName,
+            'The supporting index is not defined on this table.',
+          );
+        } else {
+          const exactColumns = index.keys.map((key) => key.column);
+          if (
+            !sameColumnsInOrder(exactColumns, constraint.columns) ||
+            index.keys.some(
+              (key) => key.expression || key.direction !== 'ASC',
+            ) ||
+            index.type !== 'NORMAL'
+          ) {
+            error(
+              'UNSUPPORTED_BACKING_INDEX',
+              constraintName,
+              'Version 1 requires an ordinary ascending backing index with exactly the constraint columns in order.',
+            );
+          }
+          if (constraint.state.deferrable && index.unique) {
+            error(
+              'INVALID_DEFERRABLE_INDEX',
+              constraintName,
+              'Deferrable PK/UK needs a nonunique backing index.',
+            );
+          }
+        }
+      }
+    }
+    if (constraint.kind === 'foreign-key') {
+      if (!isTarget) {
+        error(
+          'PARENT_FK_RETAINED',
+          constraintName,
+          'Parent-only outgoing FKs must be removed by transformation.',
+        );
+      }
+      const parent = tablesByKey.get(objectKey(constraint.parentTable));
+      if (!parent) {
+        error(
+          'MISSING_PARENT',
+          constraintName,
+          'Referenced table is not in the target model.',
+        );
+        continue;
+      }
+      const candidate = parent.constraints.find(
+        (candidate) =>
+          candidate.name === constraint.parentConstraint.name &&
+          constraint.parentConstraint.owner === parent.reference.owner &&
+          ['primary-key', 'unique'].includes(candidate.kind),
+      );
+      if (
+        !candidate ||
+        !(candidate.kind === 'primary-key' || candidate.kind === 'unique') ||
+        !sameColumnsInOrder(
+          candidate.columns,
+          constraint.columnPairs.map((pair) => pair.parentColumn),
+        )
+      ) {
+        error(
+          'MISSING_PARENT_KEY',
+          constraintName,
+          'Referenced ordered PK/UK does not match the FK column pairs.',
+        );
+      }
+    }
+  }
+}
+
+function validatePrerequisites(
+  document: TargetDocument,
+  error: ReportError,
+): void {
+  for (const prerequisite of document.prerequisites) {
+    const allowed = document.policy.externalPrerequisites.some(
+      (item) =>
+        item.type === prerequisite.type &&
+        objectKey(item.reference) === objectKey(prerequisite.reference),
+    );
+    if (prerequisite.databaseLink) {
+      error(
+        'REMOTE_PREREQUISITE',
+        qualifiedName(prerequisite.requiredBy),
+        'Remote dependencies are unsupported.',
+      );
+    } else if (!allowed) {
+      error(
+        'UNACKNOWLEDGED_PREREQUISITE',
+        qualifiedName(prerequisite.requiredBy),
+        `Provision and acknowledge ${prerequisite.type} ${qualifiedName(prerequisite.reference)} in the target policy.`,
+      );
+    }
+  }
+  if (
+    document.policy.createSchemas &&
+    document.policy.externalPrerequisites.length
+  ) {
+    error(
+      'PREREQUISITE_SETUP',
+      'policy',
+      'Use createSchemas=false when prerequisite objects are provisioned in advance.',
+    );
+  }
+}
+
+function getConstraintColumns(constraint: ConstraintDefinition): string[] {
+  switch (constraint.kind) {
+    case 'not-null':
+      return [constraint.column];
+    case 'foreign-key':
+      return constraint.columnPairs.map((pair) => pair.childColumn);
+    case 'check':
+      return [];
+    case 'primary-key':
+    case 'unique':
+      return constraint.columns;
+  }
+}
+
+function sameColumnsInOrder(
+  actual: readonly (string | null)[],
+  expected: readonly string[],
+): boolean {
+  return (
+    actual.length === expected.length &&
+    actual.every((column, index) => column === expected[index])
+  );
+}
+
 export function assertValidTarget(input: unknown): TargetDocument {
   return assertPreparedTarget(input).document;
 }
@@ -353,11 +444,12 @@ export function assertPreparedTarget(input: unknown) {
   const document = targetDocumentSchema.parse(input);
   const result = validateParsedTarget(document);
   const errors = result.diagnostics.filter((item) => item.severity === 'error');
-  if (errors.length)
+  if (errors.length) {
     throw new Error(
       errors
         .map((item) => `${item.code}: ${item.object}: ${item.message}`)
         .join('\n'),
     );
+  }
   return { document, preparation: result.preparation };
 }
