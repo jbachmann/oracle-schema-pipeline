@@ -207,3 +207,98 @@ test('explicit targets outrank parents and parents outrank view-only dependencie
     ['table:BASE', 'table:CHILD', 'table:PARENT'],
   );
 });
+
+test('prefetch hooks preserve graph order, roles, one-hop parents, cycles and remote boundaries', async () => {
+  const createCatalog = () => {
+    const catalog = new TestCatalog();
+    const child = catalog.tables[0];
+    const sibling = ordinaryTable('APP', 'SIBLING');
+    const parent = ordinaryTable('APP', 'PARENT');
+    const base = ordinaryTable('APP', 'BASE');
+    child.constraints.push(fk('PARENT', parent.reference));
+    sibling.constraints.push(fk('PARENT', parent.reference));
+    parent.constraints.push(
+      fk('GRANDPARENT', { owner: 'APP', name: 'UNSELECTED' }),
+    );
+    catalog.tables.push(parent, base, sibling);
+    catalog.views = ['ROOT', 'A', 'B', 'SHARED', 'Z'].map(ordinaryView);
+    const edge = (name: string) => ({
+      reference: { owner: 'REPORTING', name },
+      type: 'VIEW' as const,
+      databaseLink: null,
+    });
+    catalog.views[0].dependencies = [edge('B'), edge('A')];
+    catalog.views[1].dependencies = [edge('SHARED')];
+    catalog.views[2].dependencies = [edge('SHARED')];
+    catalog.views[3].dependencies = [
+      edge('ROOT'),
+      { reference: base.reference, type: 'TABLE', databaseLink: null },
+    ];
+    catalog.views[4].dependencies = [
+      { reference: parent.reference, type: 'TABLE', databaseLink: null },
+      { reference: child.reference, type: 'TABLE', databaseLink: null },
+      {
+        reference: { owner: 'REMOTE', name: 'NO_READ' },
+        type: 'VIEW',
+        databaseLink: 'LINK',
+      },
+    ];
+    return catalog;
+  };
+  const fallback = createCatalog();
+  const prefetched = createCatalog();
+  const selection = {
+    version: 2 as const,
+    tables: [
+      fallback.tables[0].reference,
+      fallback.tables[3].reference,
+      fallback.tables[0].reference,
+    ],
+    views: [fallback.views[0].reference, fallback.views[4].reference],
+  };
+  const requests = {
+    tables: [] as ObjectReference[],
+    views: [] as ObjectReference[],
+    foreignKeys: [] as ObjectReference[],
+  };
+  const catalog: SourceCatalog = prefetched;
+  catalog.prefetchTables = async function (references) {
+    assert.equal(this, prefetched);
+    requests.tables.push(...references);
+  };
+  catalog.prefetchViews = async function (references) {
+    assert.equal(this, prefetched);
+    requests.views.push(...references);
+  };
+  catalog.prefetchForeignKeys = async function (references) {
+    assert.equal(this, prefetched);
+    requests.foreignKeys.push(...references);
+  };
+  const before = await extractSource(fallback, selection);
+  const after = await extractSource(catalog, selection);
+  assert.deepEqual(
+    { ...after, extractedAt: '' },
+    { ...before, extractedAt: '' },
+  );
+  assert.deepEqual(prefetched.calls, fallback.calls);
+  assert.deepEqual(
+    requests.foreignKeys.map((ref) => ref.name),
+    ['CHILD', 'SIBLING'],
+  );
+  assert.deepEqual(
+    requests.tables.map((ref) => ref.name),
+    ['BASE', 'CHILD', 'PARENT', 'SIBLING'],
+  );
+  assert.equal(requests.views.length, 5);
+  assert.equal(new Set(requests.views.map(objectKey)).size, 5);
+  assert.ok(!requests.views.some((ref) => ref.owner === 'REMOTE'));
+  assert.deepEqual(
+    after.tables.map(({ reference, role }) => [reference.name, role]),
+    [
+      ['BASE', 'view-dependency'],
+      ['CHILD', 'target'],
+      ['PARENT', 'direct-parent'],
+      ['SIBLING', 'target'],
+    ],
+  );
+});

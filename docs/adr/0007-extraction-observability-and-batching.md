@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-24
+- Amended: 2026-09-28 (cross-object batching)
 
 ## Context
 
@@ -25,21 +26,46 @@ object references and allowlisted stable error codes enter events. In progress
 mode CLI errors are also JSON with safe codes. Default stdout and artifact bytes
 remain unchanged; extraction timestamps retain their existing meaning.
 
-Batch constraint columns (including FK parent constraint identities) and index
-keys/expressions within each selected table's metadata, using at most 32 exact
-owner/name pairs per query. Owner/name values are bound individually; no owner/name
-cross-product query is allowed. Retain sequential full LONG reads, result-set
-paging/closure, scope visibility, deterministic ordering, and strict decoding.
-Validate missing, duplicate, out-of-scope, and incomplete ordered members before
-publishing constraint caches. Checks/defaults/view text are not rewritten or truncated.
+Batch table properties/comments, columns/comments, identities, constraints,
+indexes and prerequisites across selected tables. Batch constraint columns
+(including FK parent identities) and index keys/expressions/dependencies across
+those tables. Batch view definitions/columns/restrictions/dependencies across the
+currently discovered pending views without changing traversal order or selection.
+Each query handles at most 32 exact owner/name pairs by default; values are bound,
+never interpolated. Index dependencies additionally retain the selected index's
+associated table identity. Prerequisite and index-dependency predicates stay
+separate because their filtering and null-owner semantics differ.
 
-The [benchmark report](../benchmarks/extraction.md) records baseline measurements,
-size comparisons, memory limitations, and reproducible commands. Batch size 1 is a
-comparison mode; sizes 1–128 are accepted internally, while the CLI uses 32.
+Single-object and grouped reads share SQL definitions. Grouped reads join a CTE
+containing only bound selection values at an explicit outer-query join slot and
+project grouping identities. Catalog LONG values are selected directly, never
+unioned, truncated or rewritten. Member reads retain exact-pair predicates.
+Result-set paging/closure, scope visibility and strict decoding remain unchanged.
+
+Optional `SourceCatalog` prefetch hooks preserve custom single-object catalog
+implementations. Temporary row staging is cleared after each assembly batch.
+Complete definitions are published only after all batch members validate and are
+consumed on first access. On failure, constraint entries added by the failed batch
+are rolled back; earlier complete batches remain usable. Empty optional groups
+are cached, while missing required rows, duplicates and out-of-batch or incomplete
+ordered members fail explicitly. Prefetch can change which invalid object fails
+first; it does not turn failures into partial source documents.
+
+Progress stays version 1 with the same categories. Multi-object query events omit
+`object`; each actual execution emits its own operation events. Prefetch may precede
+object events, whose timings now describe assembly and remaining on-demand work.
+Use category timings and extraction elapsed time for database performance analysis.
+
+The [current benchmark report](../benchmarks/cross-object-extraction.md) records a
+fresh pre-change baseline, category counts, timing, memory and metadata parity.
+The [historical report](../benchmarks/extraction.md) measures the earlier member-only
+optimization. Size 1 now disables cross-object and member batching; it is not the
+previous default baseline. Sizes 1–128 remain accepted internally; CLI uses 32.
 
 ## Consequences
 
-Large member sets need fewer executes. This is not a promise of lower latency on
+Large object selections and member sets need fewer executes. Deep view chains
+still require incremental dependency discovery. This is not a promise of lower latency on
 local or production databases. Model memory still grows with selected metadata.
 Events expose schema identifiers and need the same operator judgment as metadata
 artifacts. A start event identifies an outstanding operation, not ongoing server

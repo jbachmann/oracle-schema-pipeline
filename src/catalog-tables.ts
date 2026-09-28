@@ -6,7 +6,8 @@
  * Queries use the adapter's shared reader, and constraint assembly uses its shared
  * constraint reader so dependency discovery and table reads reuse the same cache.
  */
-import type { CatalogReader } from './catalog-reader.js';
+import { catalogQueries } from './catalog-queries.js';
+import type { CatalogReader, MemberQuery } from './catalog-reader.js';
 import type { ConstraintReader } from './catalog-constraints.js';
 import {
   qualifiedName,
@@ -23,13 +24,6 @@ import {
   singleRow,
 } from './catalog-decoding.js';
 import {
-  dependencyRowSchema,
-  tableRowSchema,
-  columnRowSchema,
-  commentRowSchema,
-  columnCommentRowSchema,
-  indexRowSchema,
-  identityRowSchema,
   indexExpressionRowSchema,
   indexColumnRowSchema,
 } from './catalog-schemas.js';
@@ -40,35 +34,10 @@ export async function readTable(
   reference: ObjectReference,
 ): Promise<TableDefinition> {
   const binds = { owner: reference.owner, tableName: reference.name };
-  const rows = await reader.rows(
-    'table',
-    tableRowSchema,
-    `SELECT t.tablespace_name, t.compression, t.iot_type, t.cluster_name,
-           t.nested, t.secondary, t.temporary, t.partitioned, u.oracle_maintained,
-           (SELECT COUNT(*)
-              FROM ${reader.catalogView('externalTables')} e
-             WHERE e.owner=t.owner AND e.table_name=t.table_name)
-         + (SELECT COUNT(*)
-              FROM ${reader.catalogView('objectTables')} o
-             WHERE o.owner=t.owner AND o.table_name=t.table_name)
-         + (SELECT COUNT(*)
-              FROM ${reader.catalogView('mviews')} m
-             WHERE m.owner=t.owner AND m.mview_name=t.table_name)
-         + (SELECT COUNT(*)
-              FROM ${reader.catalogView('encryptedColumns')} e
-             WHERE e.owner=t.owner AND e.table_name=t.table_name) AS special_count
-      FROM ${reader.catalogView('tables')} t
-      JOIN ${reader.catalogView('users')} u ON u.username=t.owner
-     WHERE t.owner=:owner AND t.table_name=:tableName`,
-    binds,
-  );
+  const rows = await reader.read(catalogQueries(reader)['table'], binds);
   const table = singleRow(rows, qualifiedName(reference), 'table');
-  const tableComments = await reader.rows(
-    'table-comments',
-    commentRowSchema,
-    `SELECT comments
-      FROM ${reader.catalogView('tabComments')}
-     WHERE owner=:owner AND table_name=:tableName AND table_type='TABLE'`,
+  const tableComments = await reader.read(
+    catalogQueries(reader)['table-comments'],
     binds,
   );
   const tableComment = singleRow(
@@ -128,12 +97,8 @@ async function readColumns(
   reference: ObjectReference,
 ): Promise<ColumnDefinition[]> {
   const binds = { owner: reference.owner, tableName: reference.name };
-  const identities = await reader.rows(
-    'identities',
-    identityRowSchema,
-    `SELECT column_name, generation_type, identity_options
-      FROM ${reader.catalogView('tabIdentityCols')}
-     WHERE owner=:owner AND table_name=:tableName`,
+  const identities = await reader.read(
+    catalogQueries(reader)['identities'],
     binds,
   );
   uniqueRows(identities, ['COLUMN_NAME'], qualifiedName(reference));
@@ -142,26 +107,12 @@ async function readColumns(
   );
   // USER_GENERATED retains invisible user columns but excludes internal columns
   // backing function-based indexes. Those indexes are modeled as expressions.
-  const columnRows = await reader.rows(
-    'columns',
-    columnRowSchema,
-    `SELECT column_name, column_id, internal_column_id, data_type, data_type_owner,
-           data_length, char_length, char_used, data_precision, data_scale,
-           nullable, data_default, identity_column, default_on_null,
-           virtual_column, hidden_column, collation
-      FROM ${reader.catalogView('tabCols')}
-     WHERE owner=:owner AND table_name=:tableName AND user_generated='YES'
-     ORDER BY column_id NULLS LAST, internal_column_id`,
+  const columnRows = await reader.read(
+    catalogQueries(reader)['columns'],
     binds,
   );
-  const columnCommentRows = await reader.rows(
-    'column-comments',
-    columnCommentRowSchema,
-    `SELECT cc.column_name, cc.comments
-      FROM ${reader.catalogView('colComments')} cc
-      JOIN ${reader.catalogView('tabCols')} tc
-        ON tc.owner=cc.owner AND tc.table_name=cc.table_name AND tc.column_name=cc.column_name
-     WHERE cc.owner=:owner AND cc.table_name=:tableName AND tc.user_generated='YES'`,
+  const columnCommentRows = await reader.read(
+    catalogQueries(reader)['column-comments'],
     binds,
   );
   uniqueRows(columnRows, ['COLUMN_NAME'], qualifiedName(reference));
@@ -275,41 +226,23 @@ async function readIndexes(
   reader: CatalogReader,
   table: ObjectReference,
 ): Promise<IndexDefinition[]> {
-  const indexRows = await reader.rows(
-    'indexes',
-    indexRowSchema,
-    `SELECT owner, index_name, index_type, uniqueness, visibility, status,
-           partitioned, compression
-      FROM ${reader.catalogView('indexes')}
-     WHERE table_owner=:owner AND table_name=:tableName AND index_type<>'LOB'
-     ORDER BY owner, index_name`,
-    { owner: table.owner, tableName: table.name },
-  );
+  const indexRows = await reader.read(catalogQueries(reader)['indexes'], {
+    owner: table.owner,
+    tableName: table.name,
+  });
   uniqueRows(indexRows, ['OWNER', 'INDEX_NAME'], qualifiedName(table));
   const references = indexRows.map((index) => ({
     owner: index.OWNER,
     name: index.INDEX_NAME,
   }));
-  const expressionGroups = await reader.memberRows(references, {
-    category: 'index-expressions',
-    schema: indexExpressionRowSchema,
-    view: 'indExpressions',
-    ownerColumn: 'index_owner',
-    nameColumn: 'index_name',
-    fields: 'column_position,column_expression',
-    position: 'column_position',
-    singleBind: 'indexName',
-  });
-  const keyGroups = await reader.memberRows(references, {
-    category: 'index-columns',
-    schema: indexColumnRowSchema,
-    view: 'indColumns',
-    ownerColumn: 'index_owner',
-    nameColumn: 'index_name',
-    fields: 'column_name,column_position,descend',
-    position: 'column_position',
-    singleBind: 'indexName',
-  });
+  const expressionGroups = await reader.memberRows(
+    references,
+    indexMemberQueries.expressions,
+  );
+  const keyGroups = await reader.memberRows(
+    references,
+    indexMemberQueries.columns,
+  );
   const definitions: IndexDefinition[] = [];
   for (const index of indexRows) {
     const key = objectKey({ owner: index.OWNER, name: index.INDEX_NAME });
@@ -367,24 +300,12 @@ async function readIndexDependencies(
   reference: ObjectReference,
   table: ObjectReference,
 ): Promise<IndexDefinition['dependencies']> {
-  const rows = await reader.rows(
-    'index-dependencies',
-    dependencyRowSchema,
-    `SELECT DISTINCT d.referenced_owner, d.referenced_name, d.referenced_type, d.referenced_link_name
-       FROM ${reader.catalogView('dependencies')} d
-      WHERE d.owner=:owner AND d.name=:indexName AND d.type='INDEX'
-        AND (d.referenced_link_name IS NOT NULL OR
-          ((d.referenced_owner IS NULL OR NOT (d.referenced_type='TABLE' AND d.referenced_owner=:tableOwner AND d.referenced_name=:tableName)) AND NOT EXISTS (
-            SELECT 1 FROM ${reader.catalogView('users')} u
-             WHERE u.username=d.referenced_owner AND u.oracle_maintained='Y')))
-      ORDER BY d.referenced_owner, d.referenced_name, d.referenced_type, d.referenced_link_name`,
-    {
-      owner: reference.owner,
-      indexName: reference.name,
-      tableOwner: table.owner,
-      tableName: table.name,
-    },
-  );
+  const rows = await reader.read(catalogQueries(reader)['index-dependencies'], {
+    owner: reference.owner,
+    indexName: reference.name,
+    tableOwner: table.owner,
+    tableName: table.name,
+  });
   const dependencies = rows.map((row) => {
     if (row.REFERENCED_OWNER === null) {
       catalogFailure(
@@ -407,3 +328,26 @@ async function readIndexDependencies(
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([, edge]) => edge);
 }
+
+export const indexMemberQueries = {
+  expressions: {
+    category: 'index-expressions',
+    schema: indexExpressionRowSchema,
+    view: 'indExpressions',
+    ownerColumn: 'index_owner',
+    nameColumn: 'index_name',
+    fields: 'column_position,column_expression',
+    position: 'column_position',
+    singleBind: 'indexName',
+  },
+  columns: {
+    category: 'index-columns',
+    schema: indexColumnRowSchema,
+    view: 'indColumns',
+    ownerColumn: 'index_owner',
+    nameColumn: 'index_name',
+    fields: 'column_name,column_position,descend',
+    position: 'column_position',
+    singleBind: 'indexName',
+  },
+} satisfies Record<string, MemberQuery>;

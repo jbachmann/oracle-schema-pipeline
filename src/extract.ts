@@ -23,6 +23,9 @@ import {
 
 /** Read-only catalog metadata used to extract tables and optional views. */
 export interface SourceCatalog {
+  prefetchForeignKeys?(references: ObjectReference[]): Promise<void>;
+  prefetchTables?(references: ObjectReference[]): Promise<void>;
+  prefetchViews?(references: ObjectReference[]): Promise<void>;
   databaseVersion(): Promise<string>;
   foreignKeys(table: ObjectReference): Promise<ForeignKeyDefinition[]>;
   table(reference: ObjectReference): Promise<TableDefinition>;
@@ -64,6 +67,7 @@ async function extract(
   );
 
   const parents: ObjectReference[] = [];
+  await catalog.prefetchForeignKeys?.(targetTables);
   // Only direct FK parents are included. Their own outgoing FKs are later
   // removed by transformation, keeping the dependency closure intentionally
   // bounded instead of recursively cloning the surrounding schema.
@@ -76,11 +80,13 @@ async function extract(
   const parentKeys = new Set(parents.map(objectKey));
   const tables: TableDefinition[] = [];
   const prerequisites: Prerequisite[] = [];
-  for (const reference of uniqueReferences([
+  const tableReferences = uniqueReferences([
     ...targetTables,
     ...parents,
     ...viewTableReferences,
-  ])) {
+  ]);
+  await catalog.prefetchTables?.(tableReferences);
+  for (const reference of tableReferences) {
     const table = await progress.measure(
       'object',
       () => catalog.table(reference),
@@ -139,10 +145,24 @@ async function extractViews(
   const targetViewKeys = new Set(targetViews.map(objectKey));
   const pendingViews = [...targetViews];
   const visitedViewKeys = new Set<string>();
+  const preparedViewKeys = new Set<string>();
   while (pendingViews.length) {
     // Stable read order is independent of catalog dependency ordering. The
     // visited set also terminates cycles, which downstream validation reports.
     pendingViews.sort((a, b) => objectKey(a).localeCompare(objectKey(b)));
+    if (
+      catalog.prefetchViews &&
+      !preparedViewKeys.has(objectKey(pendingViews[0]))
+    ) {
+      const references = uniqueReferences(pendingViews).filter(
+        (reference) =>
+          !visitedViewKeys.has(objectKey(reference)) &&
+          !preparedViewKeys.has(objectKey(reference)),
+      );
+      await catalog.prefetchViews(references);
+      for (const reference of references)
+        preparedViewKeys.add(objectKey(reference));
+    }
     const reference = pendingViews.shift();
     if (reference === undefined) {
       break;

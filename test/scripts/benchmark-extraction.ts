@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { ExtractionProgress, type QueryCategory } from '../../src/progress.js';
 import { OracleCatalog } from '../../src/catalog.js';
 import { extractSource } from '../../src/extract.js';
 import {
@@ -8,6 +9,15 @@ import {
 } from '../helpers/benchmark-catalog.js';
 
 const workloads: Workload[] = [
+  { tables: 74, constraints: 1, indexes: 1, viewDepth: 0, latencyMs: 2 },
+  {
+    tables: 1,
+    constraints: 1,
+    indexes: 1,
+    viewDepth: 0,
+    viewWidth: 74,
+    latencyMs: 2,
+  },
   { tables: 1, constraints: 1, indexes: 1, viewDepth: 0, latencyMs: 0 },
   { tables: 20, constraints: 8, indexes: 8, viewDepth: 4, latencyMs: 0 },
   { tables: 20, constraints: 8, indexes: 8, viewDepth: 4, latencyMs: 2 },
@@ -42,16 +52,30 @@ if (process.argv[2] !== '--worker') {
   const workload = workloads[Number(process.argv[4])];
   const batchSize = Number(process.argv[3]);
   const { connection, stats } = benchmarkConnection(workload);
+  const queryCategories: Partial<Record<QueryCategory, number>> = {};
+  const progress = new ExtractionProgress((event) => {
+    if (
+      event.stage === 'query' &&
+      event.event === 'complete' &&
+      event.queryCategory
+    ) {
+      queryCategories[event.queryCategory] =
+        (queryCategories[event.queryCategory] ?? 0) + 1;
+    }
+  });
   const start = performance.now();
   const document = await extractSource(
-    new OracleCatalog(connection, 'dba', undefined, batchSize),
+    new OracleCatalog(connection, 'dba', progress, batchSize),
     {
       version: 2,
       tables: Array.from({ length: workload.tables }, (_, i) => ({
         owner: i % 2 ? 'Owner B' : 'Owner "A',
         name: `T${i}`,
       })),
-      views: workload.viewDepth ? [{ owner: 'Owner "A', name: 'V0' }] : [],
+      views: Array.from(
+        { length: workload.viewWidth ?? (workload.viewDepth ? 1 : 0) },
+        (_, i) => ({ owner: 'Owner "A', name: `V${i}` }),
+      ),
     },
   );
   const elapsedMs = performance.now() - start;
@@ -61,6 +85,7 @@ if (process.argv[2] !== '--worker') {
       workload,
       batchSize,
       ...stats(),
+      queryCategories,
       peakProcessRssBytes: process.resourceUsage().maxRSS * 1024,
       elapsedMs,
       metadataSha256: createHash('sha256')

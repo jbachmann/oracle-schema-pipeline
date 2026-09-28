@@ -6,7 +6,7 @@ import { extractSource } from '../src/extract.js';
 import { benchmarkConnection } from './helpers/benchmark-catalog.js';
 import { tableConnection } from './helpers/catalog-connection.js';
 
-for (const count of [0, 1, 31, 32, 33, 65]) {
+for (const count of [0, 1, 31, 32, 33, 65, 74]) {
   test(`batch boundaries preserve metadata for ${count} constraints and indexes`, async () => {
     const workload = {
       tables: 2,

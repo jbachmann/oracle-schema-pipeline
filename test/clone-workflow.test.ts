@@ -190,6 +190,14 @@ for (const failedStage of [
     assert.equal(result.status, 'failed');
     assert.equal(result.destinationResetStarted, false);
     assert.ok(!seam.order.includes('reset'));
+    assert.ok(
+      !seam.order.some(
+        (operation) =>
+          operation === 'startup' ||
+          operation === 'replay' ||
+          operation.startsWith('sql-'),
+      ),
+    );
   });
 for (const [failedStage, code] of [
   ['reset', 'CLONE_RESET_FAILED'],

@@ -9,7 +9,7 @@
 import type { BindParameters, Connection } from 'oracledb';
 import type { z } from 'zod';
 import { ExtractionProgress, type QueryCategory } from './progress.js';
-import { objectKey, type ObjectReference } from './model.js';
+import { objectKey, uniqueReferences, type ObjectReference } from './model.js';
 import { catalogRows, catalogFailure } from './catalog-decoding.js';
 import { memberRowSchema } from './catalog-schemas.js';
 
@@ -43,7 +43,7 @@ const catalogViews = {
 } as const;
 type CatalogView = keyof typeof catalogViews;
 
-interface MemberQuery<S extends z.ZodTypeAny> {
+export interface MemberQuery<S extends z.ZodTypeAny = z.ZodTypeAny> {
   category: QueryCategory;
   schema: S;
   view: CatalogView;
@@ -54,8 +54,21 @@ interface MemberQuery<S extends z.ZodTypeAny> {
   singleBind: string;
 }
 
+export interface CatalogQuery<S extends z.ZodTypeAny = z.ZodTypeAny> {
+  category: QueryCategory;
+  schema: S;
+  /** First two binds identify the selected owner/name; remaining binds are context. */
+  bindNames: string[];
+  sql: string;
+}
+
 /** Shared query access for one adapter; connection lifetime belongs to the caller. */
 export class CatalogReader {
+  private readonly preparedRows = new Map<string, unknown[]>();
+  private readonly preparedMembers = new Map<
+    QueryCategory,
+    Map<string, unknown[]>
+  >();
   constructor(
     private readonly connection: Connection,
     private readonly scope: CatalogScope = 'all',
@@ -69,6 +82,156 @@ export class CatalogReader {
 
   catalogView(name: CatalogView): string {
     return catalogViews[name][this.scope];
+  }
+
+  *batches(references: ObjectReference[]): Generator<ObjectReference[]> {
+    const unique = uniqueReferences(references);
+    for (let offset = 0; offset < unique.length; offset += this.batchSize) {
+      yield unique.slice(offset, offset + this.batchSize);
+    }
+  }
+
+  private rowKey(query: CatalogQuery, binds: Record<string, string>): string {
+    return JSON.stringify([
+      query.category,
+      ...query.bindNames.map((name) => binds[name]),
+    ]);
+  }
+
+  read<S extends z.ZodTypeAny>(
+    query: CatalogQuery<S>,
+    binds: Record<string, string>,
+  ): Promise<z.infer<S>[]> {
+    const cached = this.preparedRows.get(this.rowKey(query, binds));
+    if (cached !== undefined) return Promise.resolve(cached as z.infer<S>[]);
+    return this.rows(
+      query.category,
+      query.schema,
+      query.sql.replace('/* selection */', ''),
+      binds,
+    );
+  }
+
+  /** Join exact bound selection rows, retaining the original joins and predicates.
+   * Only the bind-only selection uses UNION ALL; catalog LONGs remain direct reads.
+   * All callers supply static SQL definitions, never user SQL or identifiers.
+   */
+  async groupedRows<S extends z.ZodTypeAny>(
+    query: CatalogQuery<S>,
+    requests: Record<string, string>[],
+  ): Promise<Map<string, z.infer<S>[]>> {
+    const groups = new Map<string, z.infer<S>[]>();
+    for (let offset = 0; offset < requests.length; offset += this.batchSize) {
+      const batch = requests.slice(offset, offset + this.batchSize);
+      if (batch.length === 1) {
+        const binds = batch[0];
+        groups.set(
+          objectKey({
+            owner: binds[query.bindNames[0]],
+            name: binds[query.bindNames[1]],
+          }),
+          await this.read(query, binds),
+        );
+        continue;
+      }
+      const binds: Record<string, string> = {};
+      const selection = batch
+        .map((request, index) => {
+          const key = objectKey({
+            owner: request[query.bindNames[0]],
+            name: request[query.bindNames[1]],
+          });
+          if (groups.has(key))
+            throw new Error('Duplicate catalog batch request');
+          groups.set(key, []);
+          return (
+            'SELECT ' +
+            query.bindNames
+              .map((name) => {
+                binds[`${name}${index}`] = request[name];
+                return `:${name}${index} AS q_${name}`;
+              })
+              .join(', ') +
+            ' FROM dual'
+          );
+        })
+        .join(' UNION ALL ');
+      const projection = `selected.q_${query.bindNames[0]} AS member_owner, selected.q_${query.bindNames[1]} AS member_name, `;
+      const sql = query.sql
+        .replace(/:([A-Za-z]+)/g, (_, name: string) => {
+          if (!query.bindNames.includes(name))
+            throw new Error('Unknown catalog query bind');
+          return `selected.q_${name}`;
+        })
+        .replace(/^SELECT (DISTINCT )?/, (prefix) => prefix + projection)
+        .replace('/* selection */', 'CROSS JOIN selected_objects selected');
+      const rows = await this.rows(
+        query.category,
+        query.schema.and(memberRowSchema),
+        `WITH selected_objects AS (${selection}) ${sql}`,
+        binds,
+      );
+      const allowed = new Set(
+        batch.map((request) =>
+          objectKey({
+            owner: request[query.bindNames[0]],
+            name: request[query.bindNames[1]],
+          }),
+        ),
+      );
+      for (const row of rows) {
+        const key = objectKey({
+          owner: row.MEMBER_OWNER,
+          name: row.MEMBER_NAME,
+        });
+        if (!allowed.has(key))
+          catalogFailure(
+            'CATALOG_INCOMPLETE_METADATA',
+            'batch',
+            'member',
+            'Unexpected member outside selected batch',
+          );
+        // Grouping fields must not leak into model assembly or cached source facts.
+        const { MEMBER_OWNER: _, MEMBER_NAME: __, ...value } = row;
+        groups.get(key)!.push(value as z.infer<S>);
+      }
+    }
+    return groups;
+  }
+
+  /** Temporary row staging is private to one sequential assembly batch. */
+  async withPrefetch<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } finally {
+      this.preparedRows.clear();
+      this.preparedMembers.clear();
+    }
+  }
+
+  async prefetch<S extends z.ZodTypeAny>(
+    query: CatalogQuery<S>,
+    requests: Record<string, string>[],
+  ): Promise<Map<string, z.infer<S>[]>> {
+    const groups = await this.groupedRows(query, requests);
+    for (const request of requests) {
+      const key = objectKey({
+        owner: request[query.bindNames[0]],
+        name: request[query.bindNames[1]],
+      });
+      this.preparedRows.set(this.rowKey(query, request), groups.get(key)!);
+    }
+    return groups;
+  }
+
+  async prefetchMembers<S extends z.ZodTypeAny>(
+    references: ObjectReference[],
+    options: MemberQuery<S>,
+  ): Promise<void> {
+    this.preparedMembers.set(
+      options.category,
+      await this.memberRows(references, options),
+    );
   }
 
   rows<S extends z.ZodTypeAny>(
@@ -102,6 +265,18 @@ export class CatalogReader {
     references: ObjectReference[],
     options: MemberQuery<S>,
   ): Promise<Map<string, z.infer<S>[]>> {
+    const prepared = this.preparedMembers.get(options.category);
+    if (
+      prepared &&
+      references.every((reference) => prepared.has(objectKey(reference)))
+    ) {
+      return new Map(
+        references.map((reference) => [
+          objectKey(reference),
+          prepared.get(objectKey(reference))! as z.infer<S>[],
+        ]),
+      );
+    }
     const {
       category,
       schema,

@@ -6,6 +6,7 @@
  * only after the requested metadata passes validation. Unsupported constraint
  * kinds are returned with the definitions for inclusion in table diagnostics.
  */
+import { catalogQueries } from './catalog-queries.js';
 import type { CatalogReader } from './catalog-reader.js';
 import {
   qualifiedName,
@@ -17,7 +18,6 @@ import {
 } from './model.js';
 import { catalogFailure, uniqueRows, orderedRows } from './catalog-decoding.js';
 import {
-  constraintRowSchema,
   orderedColumnRowSchema,
   type ConstraintRow,
 } from './catalog-schemas.js';
@@ -28,6 +28,47 @@ export class ConstraintReader {
   private readonly constraintColumnCache = new Map<string, string[]>();
 
   constructor(private readonly reader: CatalogReader) {}
+
+  /** Roll back entries added by a failed assembly without discarding older facts. */
+  async withRollback<T>(operation: () => Promise<T>): Promise<T> {
+    const constraintKeys = new Set(this.constraintCache.keys());
+    const columnKeys = new Set(this.constraintColumnCache.keys());
+    try {
+      return await operation();
+    } catch (error) {
+      for (const key of this.constraintCache.keys()) {
+        if (!constraintKeys.has(key)) this.constraintCache.delete(key);
+      }
+      for (const key of this.constraintColumnCache.keys()) {
+        if (!columnKeys.has(key)) this.constraintColumnCache.delete(key);
+      }
+      throw error;
+    }
+  }
+
+  async prefetch(references: ObjectReference[]): Promise<void> {
+    const missing = references.filter(
+      (reference) => !this.constraintCache.has(objectKey(reference)),
+    );
+    for (const batch of this.reader.batches(missing)) {
+      const groups = await this.reader.groupedRows(
+        catalogQueries(this.reader).constraints,
+        batch.map((reference) => ({
+          owner: reference.owner,
+          tableName: reference.name,
+        })),
+      );
+      for (const reference of batch) {
+        uniqueRows(
+          groups.get(objectKey(reference))!,
+          ['OWNER', 'CONSTRAINT_NAME'],
+          qualifiedName(reference),
+        );
+      }
+      await this.prefetchConstraintColumns([...groups.values()].flat());
+      for (const [key, rows] of groups) this.constraintCache.set(key, rows);
+    }
+  }
 
   private async prefetchConstraintColumns(
     rows: ConstraintRow[],
@@ -78,19 +119,8 @@ export class ConstraintReader {
       return cached;
     }
     // Read the LONG SEARCH_CONDITION itself. SEARCH_CONDITION_VC can truncate.
-    const rows = await this.reader.rows(
-      'constraints',
-      constraintRowSchema,
-      `SELECT c.owner, c.constraint_name, c.constraint_type, c.generated,
-             c.status, c.validated, c.deferrable, c.deferred, c.rely,
-             c.search_condition, c.index_owner, c.index_name,
-             c.r_owner, c.r_constraint_name, c.delete_rule,
-             p.table_name AS parent_table_name
-        FROM ${this.reader.catalogView('constraints')} c
-        LEFT JOIN ${this.reader.catalogView('constraints')} p
-          ON p.owner=c.r_owner AND p.constraint_name=c.r_constraint_name
-       WHERE c.owner=:owner AND c.table_name=:tableName
-       ORDER BY c.constraint_name`,
+    const rows = await this.reader.read(
+      catalogQueries(this.reader)['constraints'],
       { owner: table.owner, tableName: table.name },
     );
     uniqueRows(rows, ['OWNER', 'CONSTRAINT_NAME'], qualifiedName(table));
@@ -107,13 +137,8 @@ export class ConstraintReader {
     if (cached) {
       return cached;
     }
-    const rows = await this.reader.rows(
-      'constraint-columns',
-      orderedColumnRowSchema,
-      `SELECT column_name, position
-        FROM ${this.reader.catalogView('consColumns')}
-       WHERE owner=:owner AND constraint_name=:constraintName
-       ORDER BY position`,
+    const rows = await this.reader.read(
+      catalogQueries(this.reader)['constraint-columns'],
       { owner: reference.owner, constraintName: reference.name },
     );
     orderedRows(rows, 'POSITION', qualifiedName(reference));

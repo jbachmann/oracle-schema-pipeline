@@ -1,0 +1,402 @@
+{
+  "date": "2026-09-28",
+  "batchSize": 32,
+  "before": [
+    {
+      "workload": {
+        "tables": 74,
+        "constraints": 1,
+        "indexes": 1,
+        "viewDepth": 0,
+        "latencyMs": 2
+      },
+      "batchSize": 32,
+      "queries": 889,
+      "peakRssBytes": 102051840,
+      "queryCategories": {
+        "constraints": 74,
+        "constraint-columns": 74,
+        "table": 74,
+        "table-comments": 74,
+        "identities": 74,
+        "columns": 74,
+        "column-comments": 74,
+        "indexes": 74,
+        "index-expressions": 74,
+        "index-columns": 74,
+        "index-dependencies": 74,
+        "prerequisites": 74,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 102055936,
+      "elapsedMs": 2331.625662,
+      "metadataSha256": "41359b296a45e60c43897b42763f17eb9c5751fadf22af3b330d50561a5b69a1"
+    },
+    {
+      "workload": {
+        "tables": 1,
+        "constraints": 1,
+        "indexes": 1,
+        "viewDepth": 0,
+        "viewWidth": 74,
+        "latencyMs": 2
+      },
+      "batchSize": 32,
+      "queries": 309,
+      "peakRssBytes": 82771968,
+      "queryCategories": {
+        "view": 74,
+        "view-columns": 74,
+        "view-restrictions": 74,
+        "view-dependencies": 74,
+        "constraints": 1,
+        "constraint-columns": 1,
+        "table": 1,
+        "table-comments": 1,
+        "identities": 1,
+        "columns": 1,
+        "column-comments": 1,
+        "indexes": 1,
+        "index-expressions": 1,
+        "index-columns": 1,
+        "index-dependencies": 1,
+        "prerequisites": 1,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 82771968,
+      "elapsedMs": 815.295079,
+      "metadataSha256": "9d4fbe5f95fa782c5c324a4701062bf5e4d3b1b6ff676b532e97b3aadb51b13d"
+    },
+    {
+      "workload": {
+        "tables": 1,
+        "constraints": 1,
+        "indexes": 1,
+        "viewDepth": 0,
+        "latencyMs": 0
+      },
+      "batchSize": 32,
+      "queries": 13,
+      "peakRssBytes": 77242368,
+      "queryCategories": {
+        "constraints": 1,
+        "constraint-columns": 1,
+        "table": 1,
+        "table-comments": 1,
+        "identities": 1,
+        "columns": 1,
+        "column-comments": 1,
+        "indexes": 1,
+        "index-expressions": 1,
+        "index-columns": 1,
+        "index-dependencies": 1,
+        "prerequisites": 1,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 77246464,
+      "elapsedMs": 8.190947999999992,
+      "metadataSha256": "6721d1faf1e9ab141a7a0802d82713bd47eca4fb80e1081bf2a7d9b74b7e2f04"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 0
+      },
+      "batchSize": 32,
+      "queries": 397,
+      "peakRssBytes": 84877312,
+      "queryCategories": {
+        "view": 4,
+        "view-columns": 4,
+        "view-restrictions": 4,
+        "view-dependencies": 4,
+        "constraints": 20,
+        "constraint-columns": 20,
+        "table": 20,
+        "table-comments": 20,
+        "identities": 20,
+        "columns": 20,
+        "column-comments": 20,
+        "indexes": 20,
+        "index-expressions": 20,
+        "index-columns": 20,
+        "index-dependencies": 160,
+        "prerequisites": 20,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 84877312,
+      "elapsedMs": 38.77204499999999,
+      "metadataSha256": "4c3bf9ccd87759e67b5063ce25d700dd7c5e85173b198f0b0a548bb7b4aa6bdd"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 2
+      },
+      "batchSize": 32,
+      "queries": 397,
+      "peakRssBytes": 85897216,
+      "queryCategories": {
+        "view": 4,
+        "view-columns": 4,
+        "view-restrictions": 4,
+        "view-dependencies": 4,
+        "constraints": 20,
+        "constraint-columns": 20,
+        "table": 20,
+        "table-comments": 20,
+        "identities": 20,
+        "columns": 20,
+        "column-comments": 20,
+        "indexes": 20,
+        "index-expressions": 20,
+        "index-columns": 20,
+        "index-dependencies": 160,
+        "prerequisites": 20,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 85897216,
+      "elapsedMs": 1028.0918589999999,
+      "metadataSha256": "4c3bf9ccd87759e67b5063ce25d700dd7c5e85173b198f0b0a548bb7b4aa6bdd"
+    },
+    {
+      "workload": {
+        "tables": 4,
+        "constraints": 40,
+        "indexes": 40,
+        "viewDepth": 2,
+        "latencyMs": 2
+      },
+      "batchSize": 32,
+      "queries": 225,
+      "peakRssBytes": 83615744,
+      "queryCategories": {
+        "view": 2,
+        "view-columns": 2,
+        "view-restrictions": 2,
+        "view-dependencies": 2,
+        "constraints": 4,
+        "constraint-columns": 8,
+        "table": 4,
+        "table-comments": 4,
+        "identities": 4,
+        "columns": 4,
+        "column-comments": 4,
+        "indexes": 4,
+        "index-expressions": 8,
+        "index-columns": 8,
+        "index-dependencies": 160,
+        "prerequisites": 4,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 83615744,
+      "elapsedMs": 593.117231,
+      "metadataSha256": "61d73d8de1b2df84ea97821421976352a013ad3b3976e0300ef505811f1884a0"
+    }
+  ],
+  "after": [
+    {
+      "workload": {
+        "tables": 74,
+        "constraints": 1,
+        "indexes": 1,
+        "viewDepth": 0,
+        "latencyMs": 2
+      },
+      "batchSize": 32,
+      "queries": 37,
+      "peakRssBytes": 86773760,
+      "queryCategories": {
+        "constraints": 3,
+        "constraint-columns": 3,
+        "table": 3,
+        "table-comments": 3,
+        "columns": 3,
+        "column-comments": 3,
+        "identities": 3,
+        "prerequisites": 3,
+        "indexes": 3,
+        "index-expressions": 3,
+        "index-columns": 3,
+        "index-dependencies": 3,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 86773760,
+      "elapsedMs": 174.04562800000002,
+      "metadataSha256": "41359b296a45e60c43897b42763f17eb9c5751fadf22af3b330d50561a5b69a1"
+    },
+    {
+      "workload": {
+        "tables": 1,
+        "constraints": 1,
+        "indexes": 1,
+        "viewDepth": 0,
+        "viewWidth": 74,
+        "latencyMs": 2
+      },
+      "batchSize": 32,
+      "queries": 25,
+      "peakRssBytes": 82444288,
+      "queryCategories": {
+        "view": 3,
+        "view-columns": 3,
+        "view-restrictions": 3,
+        "view-dependencies": 3,
+        "constraints": 1,
+        "constraint-columns": 1,
+        "table": 1,
+        "table-comments": 1,
+        "columns": 1,
+        "column-comments": 1,
+        "identities": 1,
+        "prerequisites": 1,
+        "indexes": 1,
+        "index-expressions": 1,
+        "index-columns": 1,
+        "index-dependencies": 1,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 82444288,
+      "elapsedMs": 113.99093199999999,
+      "metadataSha256": "9d4fbe5f95fa782c5c324a4701062bf5e4d3b1b6ff676b532e97b3aadb51b13d"
+    },
+    {
+      "workload": {
+        "tables": 1,
+        "constraints": 1,
+        "indexes": 1,
+        "viewDepth": 0,
+        "latencyMs": 0
+      },
+      "batchSize": 32,
+      "queries": 13,
+      "peakRssBytes": 75280384,
+      "queryCategories": {
+        "constraints": 1,
+        "constraint-columns": 1,
+        "table": 1,
+        "table-comments": 1,
+        "columns": 1,
+        "column-comments": 1,
+        "identities": 1,
+        "prerequisites": 1,
+        "indexes": 1,
+        "index-expressions": 1,
+        "index-columns": 1,
+        "index-dependencies": 1,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 75284480,
+      "elapsedMs": 13.111679000000038,
+      "metadataSha256": "6721d1faf1e9ab141a7a0802d82713bd47eca4fb80e1081bf2a7d9b74b7e2f04"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 0
+      },
+      "batchSize": 32,
+      "queries": 45,
+      "peakRssBytes": 92864512,
+      "queryCategories": {
+        "view": 4,
+        "view-columns": 4,
+        "view-restrictions": 4,
+        "view-dependencies": 4,
+        "constraints": 1,
+        "constraint-columns": 5,
+        "table": 1,
+        "table-comments": 1,
+        "columns": 1,
+        "column-comments": 1,
+        "identities": 1,
+        "prerequisites": 1,
+        "indexes": 1,
+        "index-expressions": 5,
+        "index-columns": 5,
+        "index-dependencies": 5,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 92868608,
+      "elapsedMs": 83.57885199999998,
+      "metadataSha256": "4c3bf9ccd87759e67b5063ce25d700dd7c5e85173b198f0b0a548bb7b4aa6bdd"
+    },
+    {
+      "workload": {
+        "tables": 20,
+        "constraints": 8,
+        "indexes": 8,
+        "viewDepth": 4,
+        "latencyMs": 2
+      },
+      "batchSize": 32,
+      "queries": 45,
+      "peakRssBytes": 87707648,
+      "queryCategories": {
+        "view": 4,
+        "view-columns": 4,
+        "view-restrictions": 4,
+        "view-dependencies": 4,
+        "constraints": 1,
+        "constraint-columns": 5,
+        "table": 1,
+        "table-comments": 1,
+        "columns": 1,
+        "column-comments": 1,
+        "identities": 1,
+        "prerequisites": 1,
+        "indexes": 1,
+        "index-expressions": 5,
+        "index-columns": 5,
+        "index-dependencies": 5,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 87707648,
+      "elapsedMs": 150.269761,
+      "metadataSha256": "4c3bf9ccd87759e67b5063ce25d700dd7c5e85173b198f0b0a548bb7b4aa6bdd"
+    },
+    {
+      "workload": {
+        "tables": 4,
+        "constraints": 40,
+        "indexes": 40,
+        "viewDepth": 2,
+        "latencyMs": 2
+      },
+      "batchSize": 32,
+      "queries": 37,
+      "peakRssBytes": 85630976,
+      "queryCategories": {
+        "view": 2,
+        "view-columns": 2,
+        "view-restrictions": 2,
+        "view-dependencies": 2,
+        "constraints": 1,
+        "constraint-columns": 5,
+        "table": 1,
+        "table-comments": 1,
+        "columns": 1,
+        "column-comments": 1,
+        "identities": 1,
+        "prerequisites": 1,
+        "indexes": 1,
+        "index-expressions": 5,
+        "index-columns": 5,
+        "index-dependencies": 5,
+        "database-version": 1
+      },
+      "peakProcessRssBytes": 85630976,
+      "elapsedMs": 120.623448,
+      "metadataSha256": "61d73d8de1b2df84ea97821421976352a013ad3b3976e0300ef505811f1884a0"
+    }
+  ]
+}

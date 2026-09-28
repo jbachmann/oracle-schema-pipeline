@@ -5,6 +5,7 @@
  * return direct catalog references; extraction follows those references to select
  * dependent views and tables and populate the source document.
  */
+import { catalogQueries } from './catalog-queries.js';
 import type { CatalogReader } from './catalog-reader.js';
 import {
   qualifiedName,
@@ -17,48 +18,22 @@ import {
   orderedRows,
   singleRow,
 } from './catalog-decoding.js';
-import {
-  viewRowSchema,
-  dependencyRowSchema,
-  orderedColumnRowSchema,
-  viewRestrictionRowSchema,
-} from './catalog-schemas.js';
 
 export async function readView(
   reader: CatalogReader,
   reference: ObjectReference,
 ): Promise<ViewDefinition> {
   const binds = { owner: reference.owner, viewName: reference.name };
-  const rows = await reader.rows(
-    'view',
-    viewRowSchema,
-    `SELECT v.text, v.read_only, v.bequeath, v.editioning_view, v.container_data,
-           v.default_collation, v.type_text, v.superview_name, o.status, u.oracle_maintained
-      FROM ${reader.catalogView('views')} v
-      JOIN ${reader.catalogView('objects')} o
-        ON o.owner=v.owner AND o.object_name=v.view_name AND o.object_type='VIEW'
-      JOIN ${reader.catalogView('users')} u ON u.username=v.owner
-     WHERE v.owner=:owner AND v.view_name=:viewName`,
-    binds,
-  );
+  const rows = await reader.read(catalogQueries(reader)['view'], binds);
   const row = singleRow(rows, qualifiedName(reference), 'view');
-  const columns = await reader.rows(
-    'view-columns',
-    orderedColumnRowSchema,
-    `SELECT column_name, column_id AS position
-      FROM ${reader.catalogView('tabColumns')}
-     WHERE owner=:owner AND table_name=:viewName
-     ORDER BY column_id`,
+  const columns = await reader.read(
+    catalogQueries(reader)['view-columns'],
     binds,
   );
   orderedRows(columns, 'POSITION', qualifiedName(reference));
   uniqueRows(columns, ['COLUMN_NAME'], qualifiedName(reference));
-  const restrictions = await reader.rows(
-    'view-restrictions',
-    viewRestrictionRowSchema,
-    `SELECT constraint_name, constraint_type, status
-      FROM ${reader.catalogView('constraints')}
-     WHERE owner=:owner AND table_name=:viewName AND constraint_type IN ('V','O')`,
+  const restrictions = await reader.read(
+    catalogQueries(reader)['view-restrictions'],
     binds,
   );
   if (restrictions.length > 1) {
@@ -113,15 +88,10 @@ export async function readViewDependencies(
   reader: CatalogReader,
   reference: ObjectReference,
 ): Promise<ViewDefinition['dependencies']> {
-  const rows = await reader.rows(
-    'view-dependencies',
-    dependencyRowSchema,
-    `SELECT DISTINCT referenced_owner, referenced_name, referenced_type, referenced_link_name
-      FROM ${reader.catalogView('dependencies')}
-     WHERE owner=:owner AND name=:viewName AND type='VIEW'
-     ORDER BY referenced_owner, referenced_name, referenced_type`,
-    { owner: reference.owner, viewName: reference.name },
-  );
+  const rows = await reader.read(catalogQueries(reader)['view-dependencies'], {
+    owner: reference.owner,
+    viewName: reference.name,
+  });
   uniqueRows(
     rows,
     [

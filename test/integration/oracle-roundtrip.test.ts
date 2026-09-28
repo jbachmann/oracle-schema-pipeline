@@ -559,44 +559,49 @@ test('restricted ALL catalog sessions have only explicit grants and reject hidde
   }
 });
 
-test(
-  'bounded catalog batches match single-member extraction of the live multi-owner selection',
-  { timeout: 600_000 },
-  async () => {
-    const dsn = await publishedDsn('oracle-source');
-    const connection = await oracle.getConnection({
-      user: 'SYSTEM[SCHEMA_READER]',
-      password,
-      connectString: dsn,
-    });
-    try {
-      const selection = {
-        version: 2 as const,
-        tables: await selectedTables(dsn),
-        views: selectedViews,
-      };
-      const counts: number[] = [];
-      const documents = [];
-      for (const size of [1, 32]) {
-        let queries = 0;
-        const progress = new ExtractionProgress((event) => {
-          if (event.stage === 'query' && event.event === 'complete') queries++;
-        });
-        const { extractedAt: _, ...document } = await extractSource(
-          new OracleCatalog(connection, 'all', progress, size),
-          selection,
-          progress,
+for (const scope of ['all', 'dba'] as const) {
+  test(
+    `cross-object ${scope.toUpperCase()} batches preserve source, target and generated SQL on Oracle`,
+    { timeout: 600_000 },
+    async () => {
+      const dsn = await publishedDsn('oracle-source');
+      const connection = await oracle.getConnection({
+        user: scope === 'all' ? 'SYSTEM[SCHEMA_READER]' : 'SYSTEM',
+        password,
+        connectString: dsn,
+      });
+      try {
+        const selection = {
+          version: 2 as const,
+          tables: await selectedTables(dsn),
+          views: selectedViews,
+        };
+        const counts: number[] = [];
+        const outputs = [];
+        for (const size of [1, 32]) {
+          let queries = 0;
+          const progress = new ExtractionProgress((event) => {
+            if (event.stage === 'query' && event.event === 'complete')
+              queries++;
+          });
+          const source = await extractSource(
+            new OracleCatalog(connection, scope, progress, size),
+            selection,
+            progress,
+          );
+          source.extractedAt = '2026-09-28T00:00:00.000Z';
+          const target = transformSource(source, policySchema.parse({}));
+          outputs.push({ source, target, sql: generateSql(target) });
+          counts.push(queries);
+        }
+        assert.deepEqual(outputs[1], outputs[0]);
+        assert.ok(
+          counts[1] < counts[0],
+          `Expected fewer queries: ${counts.join(' -> ')}`,
         );
-        documents.push(document);
-        counts.push(queries);
+      } finally {
+        await connection.close();
       }
-      assert.deepEqual(documents[1], documents[0]);
-      assert.ok(
-        counts[1] < counts[0],
-        `Expected fewer queries: ${counts.join(' -> ')}`,
-      );
-    } finally {
-      await connection.close();
-    }
-  },
-);
+    },
+  );
+}

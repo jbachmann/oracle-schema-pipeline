@@ -209,21 +209,39 @@ synchronous observer exceptions are ignored so telemetry cannot alter extraction
 If a library caller's row-count callback throws, the operation still completes
 successfully and its completion event omits `rows`; the reporting error is not exposed.
 
-Constraint member reads and index key/expression reads use sequential batches of
-up to 32 exact owner/name pairs, within each table's selected metadata. FK member
-batches include referenced constraint identities without expanding table selection.
-No concurrent queries share a connection. Missing members, duplicates, gaps, and
-out-of-batch results fail explicitly. Complete LONG reads and ALL/DBA scope remain
-unchanged. Batch size bounds query predicates, not total model memory.
+Table metadata, constraints, indexes (including dependencies), prerequisites and
+view metadata use sequential batches of up to 32 exact owner/name pairs **across
+objects**. FK column batches include referenced constraint identities without
+expanding table selection. Views batch the currently discovered pending set;
+a deep chain that reveals one view at a time remains incremental. Index reads
+retain each index's owner and associated table, including cross-owner indexes.
+
+No concurrent queries share a connection. Missing required metadata, duplicate or
+out-of-batch rows and incomplete ordered members fail explicitly. Complete LONG
+reads and ALL/DBA visibility remain unchanged. Failed batches publish no partial
+prepared definitions; earlier complete batches remain available. Batch size bounds
+query selections and temporary staging, not total model memory.
+
+Library catalogs may implement optional `prefetchForeignKeys`, `prefetchTables`
+and `prefetchViews` methods, each taking `ObjectReference[]` and returning
+`Promise<void>`. Existing catalogs without these methods continue to work.
+Prefetch emits query events before per-object assembly events. Object timings
+therefore exclude prefetched database work; use query-category timings and the
+overall extraction time to assess database cost. Multi-object query events omit
+`object`. Counts measure executions, not every internal fetch/network round trip.
 
 Run `npm run benchmark:extraction` for isolated synthetic comparisons at batch sizes
-1, 16, 32, and 64 (or append `-- 32` for one size). Each JSON line reports the
-workload, query count, elapsed milliseconds, sampled peak RSS, process peak RSS,
-and a metadata hash excluding extraction time. The runner verifies identical
-hashes across sizes. The measured 20-table latency fixture fell from 657 to 237
-queries; the four-table, 40-member fixture fell from 521 to 65. These are simulated
-transport results, not production speed guarantees. See the
-[measurement report](docs/benchmarks/extraction.md) and
+1, 16, 32 and 64 (or append `-- 32` for one size). Each JSON line reports the
+workload, total and per-category execution counts, elapsed milliseconds, sampled
+peak RSS, process peak RSS and a metadata hash excluding extraction time.
+The runner verifies identical hashes across sizes. There is no CLI batch-size flag.
+
+The fresh 74-table fixture fell from 889 to 37 queries. For 74 independently
+selected views sharing one base table, view queries fell from 296 to 12 (309 to
+25 total). Metadata hashes match the baseline and the one-table/one-index fixture
+remains 13 queries. These are simulated transport results, not production speed
+guarantees. See the [measurement report](docs/benchmarks/cross-object-extraction.md),
+[historical report](docs/benchmarks/extraction.md) and
 [ADR 0007](docs/adr/0007-extraction-observability-and-batching.md).
 
 ## One-hop selection and preserved source facts
@@ -588,7 +606,6 @@ check fails, plus `oracleErrorCodes` when available. Checks require an online
 `defaultTablespace`, matching `maxStringSize`, existing schema owners when
 `createSchemas=false`, and valid `externalPrerequisites` in
 `FREEPDB1`. Raw SQL client output is not retained.
-
 
 Success requires modeled objects to exist and be valid; this is bounded checking,
 not complete semantic equivalence. The destination stays running. After reset,
