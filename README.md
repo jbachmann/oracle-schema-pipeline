@@ -549,6 +549,16 @@ only the destination, in project `oracle-schema-pipeline-local`, on a local Dock
 socket endpoint. Source and destination environment/DSN overrides are not used.
 The listener binds to `127.0.0.1:1522` by default, service `FREEPDB1`.
 
+Before any source connection, local preflight checks the Docker endpoint, daemon,
+Compose, pinned Oracle image, and destination identity. Each check prints its start
+and completion or failure; the active check reports elapsed time every 10 seconds.
+A missing image triggers a download with recognized layer statuses and byte counters
+when Docker supplies them. Cached images need no download. Docker output varies;
+when counters are unavailable, status lines and elapsed-time updates remain useful.
+These append-only lines also work in redirected logs. Elapsed time means the command
+is still waiting, not necessarily that a download is advancing. Unknown registry
+text and raw errors are excluded from progress output.
+
 Only after all artifacts and preflight checks succeed does the command remove the
 old container and volume, including a stopped destination, then start a fresh
 Oracle database. Optional trusted prerequisite SQL executes once before replay.

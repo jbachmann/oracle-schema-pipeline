@@ -40,7 +40,14 @@ test('configuration defaults, literal secrets, and mutually exclusive source con
       false,
     );
 });
-test('configuration rejects unknown fields, placeholders, missing/equal secrets and invalid versions/ports', () => {
+test('configuration accepts the same source and destination password', () => {
+  const input = config();
+  input.destination.password = input.source.password;
+  const parsed = cloneConfigSchema.parse(input);
+  assert.equal(parsed.source.password, input.source.password);
+  assert.equal(parsed.destination.password, input.source.password);
+});
+test('configuration rejects unknown fields, placeholders, missing secrets and invalid versions/ports', () => {
   const input = config();
   for (const value of [
     { ...input, version: 2 },
@@ -49,7 +56,6 @@ test('configuration rejects unknown fields, placeholders, missing/equal secrets 
       { dsn: 'remote' },
       { composeFile: 'other' },
       { password: 'REPLACE_DESTINATION_PASSWORD' },
-      { password: input.source.password },
       { password: '' },
       { port: 0 },
       { port: 65536 },

@@ -1,4 +1,6 @@
 import { join } from 'node:path';
+import { PreflightProgress, type PreflightObserver } from './clone-progress.js';
+import type { CommandOptions } from './process.js';
 import type { TargetDocument } from '../src/model.js';
 import type { LoadedConfig } from './clone-config.js';
 import {
@@ -90,7 +92,7 @@ export function verificationChecks(target: TargetDocument): string {
     .join('');
 }
 export interface Destination {
-  preflight(): Promise<string>;
+  preflight(observer?: PreflightObserver): Promise<string>;
   identity(): Promise<void>;
   reset(): Promise<void>;
   start(): Promise<void>;
@@ -116,12 +118,20 @@ export class ComposeDestination implements Destination {
     args: string[],
     input?: string,
     timeoutMs = 120_000,
+    onProgressLine?: CommandOptions['onProgressLine'],
   ): Promise<string> {
     const env = args[0] === 'compose' ? this.env : childEnvironment();
     return this.run(
       'docker',
       [...(this.endpoint ? ['--host', this.endpoint] : []), ...args],
-      { env, cwd: this.root, signal: this.signal, input, timeoutMs },
+      {
+        env,
+        cwd: this.root,
+        signal: this.signal,
+        input,
+        timeoutMs,
+        onProgressLine,
+      },
     );
   }
   private compose(args: string[], input?: string, timeoutMs?: number) {
@@ -140,30 +150,46 @@ export class ComposeDestination implements Destination {
       timeoutMs,
     );
   }
-  async preflight(): Promise<string> {
+  async preflight(observer?: PreflightObserver): Promise<string> {
+    const progress = new PreflightProgress(observer);
     try {
-      if (process.env.DOCKER_HOST && !process.env.DOCKER_CONTEXT)
-        this.endpoint = process.env.DOCKER_HOST;
-      else {
-        const args = [
-          'context',
-          'inspect',
-          ...(process.env.DOCKER_CONTEXT ? [process.env.DOCKER_CONTEXT] : []),
-        ];
-        const contexts = JSON.parse(await this.docker(args));
-        this.endpoint = contexts[0].Endpoints.docker.Host;
-      }
-      assertLocalEndpoint(this.endpoint);
-      await this.docker(['info', '--format', '{{.ID}}']);
-      await this.compose(['version']);
-      try {
-        await this.docker(['image', 'inspect', image]);
-      } catch {
-        await this.docker(['pull', image], undefined, 1_200_000);
-      }
-      const images = JSON.parse(await this.docker(['image', 'inspect', image]));
-      await this.identity();
-      return images[0].Id;
+      await progress.operation('endpoint', async () => {
+        if (process.env.DOCKER_HOST && !process.env.DOCKER_CONTEXT)
+          this.endpoint = process.env.DOCKER_HOST;
+        else {
+          const args = [
+            'context',
+            'inspect',
+            ...(process.env.DOCKER_CONTEXT ? [process.env.DOCKER_CONTEXT] : []),
+          ];
+          const contexts = JSON.parse(await this.docker(args));
+          this.endpoint = contexts[0].Endpoints.docker.Host;
+        }
+        assertLocalEndpoint(this.endpoint);
+      });
+      await progress.operation('daemon', () =>
+        this.docker(['info', '--format', '{{.ID}}']),
+      );
+      await progress.operation('compose', () => this.compose(['version']));
+      const imageId = await progress.operation('image', async () => {
+        try {
+          await this.docker(['image', 'inspect', image]);
+        } catch (error) {
+          if (error instanceof CloneError && error.code === 'CLONE_INTERRUPTED')
+            throw error;
+          await progress.pull((onLine) =>
+            this.docker(['pull', image], undefined, 1_200_000, ({ line }) =>
+              onLine(line),
+            ),
+          );
+        }
+        const images = JSON.parse(
+          await this.docker(['image', 'inspect', image]),
+        );
+        return images[0].Id as string;
+      });
+      await progress.operation('identity', () => this.identity());
+      return imageId;
     } catch (error) {
       if (
         error instanceof CloneError &&

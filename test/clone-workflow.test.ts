@@ -347,3 +347,37 @@ test('different checkouts sharing a destination lock cannot run concurrently', a
   assert.deepEqual(secondSeam.order, []);
   assert.equal((await first).result.status, 'succeeded');
 });
+
+test('preflight formats safe progress through the injected logger and failure blocks extraction and reset', async () => {
+  const root = await fixture(),
+    seam = seams(),
+    logs: string[] = [];
+  const { PreflightProgress } = await import('../scripts/clone-progress.js');
+  const destination = seam.destination();
+  const { result, directory } = await cloneDatabase({
+    root,
+    ...seam,
+    destination: () => ({
+      ...destination,
+      preflight: (observer) =>
+        new PreflightProgress(observer).operation('daemon', async () => {
+          throw new CloneError('CLONE_DOCKER_UNAVAILABLE');
+        }),
+    }),
+    log: (line) => logs.push(line),
+  });
+  assert.ok(logs.includes('Preflight: Docker daemon — starting'));
+  assert.ok(
+    logs.some((line) =>
+      /^Preflight: Docker daemon — failed \([\d.]+s\)$/.test(line),
+    ),
+  );
+  assert.deepEqual(seam.order, []);
+  const stored = await readFile(join(directory, 'run-result.json'), 'utf8');
+  runResultSchema.parse(JSON.parse(stored));
+  assert.doesNotMatch(
+    logs.join('\n') + stored,
+    /source-secret|dest-secret|host\/SERVICE|elapsedMs|heartbeat/,
+  );
+  assert.equal(result.status, 'failed');
+});

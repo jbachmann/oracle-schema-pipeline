@@ -9,7 +9,7 @@ import {
   sqlSession,
   generatedReplay,
 } from '../scripts/compose-destination.js';
-import type { Runner } from '../scripts/process.js';
+import { CloneError, type Runner } from '../scripts/process.js';
 test('only local socket Docker endpoints are accepted', () => {
   assertLocalEndpoint('unix:///tmp/docker.sock');
   for (const endpoint of [
@@ -194,3 +194,162 @@ test('remote Docker context is rejected before any resource operation', async ()
     if (priorContext !== undefined) process.env.DOCKER_CONTEXT = priorContext;
   }
 });
+
+for (const scenario of [
+  'cached',
+  'download',
+  'silent',
+  'pull-failure',
+  'inspect-failure',
+  'identity-failure',
+  'interrupt',
+  'inspect-interrupt',
+] as const) {
+  test(`preflight progress preserves commands and failure boundaries: ${scenario}`, async () => {
+    const events: import('../scripts/clone-progress.js').PreflightEvent[] = [];
+    const calls: { args: string[]; timeout?: number; observed: boolean }[] = [];
+    const base = runner(scenario === 'identity-failure');
+    let inspections = 0;
+    const run: Runner = async (file, args, options) => {
+      calls.push({
+        args,
+        timeout: options.timeoutMs,
+        observed: !!options.onProgressLine,
+      });
+      if (args.includes('image')) {
+        inspections++;
+        if (scenario === 'inspect-interrupt')
+          throw new CloneError('CLONE_INTERRUPTED');
+        if (
+          inspections === 1 &&
+          ['download', 'silent', 'pull-failure', 'interrupt'].includes(scenario)
+        )
+          throw Error('private-registry-secret');
+        if (inspections === 2 && scenario === 'inspect-failure')
+          throw Error('private-inspection-secret');
+      }
+      if (args.includes('pull')) {
+        if (scenario !== 'silent') {
+          options.onProgressLine?.({
+            stream: 'stderr',
+            line: 'abcdef123456: Downloading 1MB/2MB',
+          });
+          options.onProgressLine?.({
+            stream: 'stdout',
+            line: 'abcdef123456: Download complete',
+          });
+          options.onProgressLine?.({
+            stream: 'stderr',
+            line: 'private-registry-secret',
+          });
+        }
+        if (scenario === 'pull-failure') throw Error('private-pull-secret');
+        if (scenario === 'interrupt') throw new CloneError('CLONE_INTERRUPTED');
+        return '';
+      }
+      return base.run(file, args, options);
+    };
+    const destination = new ComposeDestination(
+      '/repo',
+      {
+        password: 'private-destination-secret',
+        port: 1524,
+        startupTimeoutSeconds: 5,
+      },
+      undefined,
+      run,
+    );
+    if (['cached', 'download', 'silent'].includes(scenario))
+      assert.equal(
+        await destination.preflight((event) => events.push(event)),
+        'sha256:test',
+      );
+    else
+      await assert.rejects(
+        destination.preflight((event) => events.push(event)),
+        scenario.includes('interrupt')
+          ? /CLONE_INTERRUPTED/
+          : scenario === 'identity-failure'
+            ? /CLONE_DESTINATION_MISMATCH/
+            : /CLONE_DOCKER_UNAVAILABLE/,
+      );
+    assert.deepEqual(
+      events.slice(0, 6).map((event) => [event.operation, event.event]),
+      [
+        ['endpoint', 'start'],
+        ['endpoint', 'complete'],
+        ['daemon', 'start'],
+        ['daemon', 'complete'],
+        ['compose', 'start'],
+        ['compose', 'complete'],
+      ],
+    );
+    const pulled = ['download', 'silent', 'pull-failure', 'interrupt'].includes(
+      scenario,
+    );
+    assert.equal(calls.filter((call) => call.observed).length, pulled ? 1 : 0);
+    for (const call of calls) {
+      assert.equal(
+        call.timeout,
+        call.args.includes('pull') ? 1_200_000 : 120_000,
+      );
+      if (!call.args.includes('context'))
+        assert.deepEqual(call.args.slice(0, 2), [
+          '--host',
+          'unix:///tmp/docker.sock',
+        ]);
+    }
+    assert.equal(
+      events.some((event) => event.operation === 'image-pull'),
+      pulled,
+    );
+    assert.equal(
+      events.some((event) => event.event === 'layer'),
+      pulled && scenario !== 'silent',
+    );
+    if (
+      [
+        'pull-failure',
+        'inspect-failure',
+        'interrupt',
+        'inspect-interrupt',
+      ].includes(scenario)
+    ) {
+      assert.ok(
+        !events.some(
+          (event) => event.operation === 'image' && event.event === 'complete',
+        ),
+      );
+      assert.ok(!events.some((event) => event.operation === 'identity'));
+    }
+    assert.equal(
+      events.at(-1)?.event,
+      ['cached', 'download', 'silent'].includes(scenario)
+        ? 'complete'
+        : 'failure',
+    );
+    assert.doesNotMatch(JSON.stringify(events), /private-|unix:|sha256/);
+    const names = calls.map((call) =>
+      call.args.filter(
+        (arg) => arg !== '--host' && arg !== 'unix:///tmp/docker.sock',
+      ),
+    );
+    assert.deepEqual(names.slice(0, 3), [
+      ['context', 'inspect'],
+      ['info', '--format', '{{.ID}}'],
+      [
+        'compose',
+        '--env-file',
+        '/dev/null',
+        '-p',
+        project,
+        '-f',
+        '/repo/docker-compose.yml',
+        'version',
+      ],
+    ]);
+    const count = events.length;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(events.length, count);
+  });
+}

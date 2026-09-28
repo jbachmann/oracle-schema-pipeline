@@ -47,8 +47,7 @@ export const cloneConfigSchema = z
       })
       .strict(),
   })
-  .strict()
-  .refine((config) => config.source.password !== config.destination.password);
+  .strict();
 
 export async function loadCloneConfig(path: string) {
   try {

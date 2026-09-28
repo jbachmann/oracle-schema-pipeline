@@ -98,7 +98,7 @@ Add a strict Zod schema in proposed `scripts/clone-config.ts`:
 | `objects`                           | Path relative to the config directory, default `objects.json`; parse with existing selection v2 schema.                                        |
 | `policy`                            | Path relative to the config directory, default `policy.json`; parse with existing policy v1 schema.                                            |
 | `prerequisiteSql`                   | Optional path relative to the config directory; readable UTF-8 SQL*Plus script.                                                                |
-| `destination.password`              | Required nonempty bootstrap secret, distinct from the source password. No development password fallback.                                       |
+| `destination.password`              | Required nonempty bootstrap secret; may match the source password. No development password fallback.                                          |
 | `destination.port`                  | Integer 1–65535, default `1522`; bind the published listener to `127.0.0.1`.                                                                   |
 | `destination.startupTimeoutSeconds` | Positive integer, default `1200`; bounded Compose/PDB readiness.                                                                               |
 

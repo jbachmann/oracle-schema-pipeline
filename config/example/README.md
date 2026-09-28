@@ -10,7 +10,7 @@ chmod 600 config/local/*.json
 ```
 
 Edit all placeholders, choose exact catalog object names, and run `npm run db:clone`.
-The destination password must differ from the source password. Configuration is
+The destination password may match the source password. Configuration is
 literal JSON: `$`, backticks and environment-variable names are not expanded.
 `config/local/` is ignored; do not force-add it. Metadata artifacts can also be
 sensitive. Never embed credentials in a DSN.

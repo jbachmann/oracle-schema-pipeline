@@ -1,3 +1,4 @@
+import { formatPreflight } from './clone-progress.js';
 import { mkdir, mkdtemp, open, readFile, unlink } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
@@ -138,7 +139,7 @@ export async function cloneDatabase(
     result.destinationImageId = await stage(
       'preflight',
       'CLONE_DOCKER_UNAVAILABLE',
-      () => destination.preflight(),
+      () => destination.preflight((event) => log(formatPreflight(event))),
     );
     await writeJson(join(directory, 'objects.json'), objects, { tempDir });
     await writeJson(join(directory, 'policy.json'), policy, { tempDir });
