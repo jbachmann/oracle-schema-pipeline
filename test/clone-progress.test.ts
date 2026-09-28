@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PreflightProgress,
+  CloneExtractionProgress,
   parsePullLine,
   formatPreflight,
   type PreflightEvent,
@@ -175,4 +176,83 @@ test('layer backlog is bounded even for arbitrary numbers of valid layer identif
     },
   );
   assert.equal(events.filter((event) => event.event === 'layer').length, 256);
+});
+
+for (const outcome of ['success', 'failure', 'interruption']) {
+  test(`extraction reports activity during silence and stops after ${outcome}`, async () => {
+    const time = fakeClock(),
+      logs: string[] = [];
+    const progress = new CloneExtractionProgress(
+      (line) => logs.push(line),
+      time.clock,
+    );
+    let late!: (line: string) => void;
+    const failure = Error(outcome);
+    const result = progress.run(async (line) => {
+      late = line;
+      const event = (stage: string, event: string) =>
+        line(
+          JSON.stringify({
+            version: 1,
+            stage,
+            event,
+            object: 'private-secret',
+          }),
+        );
+      event('extract', 'start');
+      event('query', 'start');
+      time.tick(10_000);
+      assert.equal(
+        logs.at(-1),
+        'Extraction extract: still running (10s elapsed; 0 queries completed; 0 objects completed)',
+      );
+      for (let i = 0; i < 100; i++) event('query', 'complete');
+      event('object', 'complete');
+      assert.equal(logs.length, 2);
+      time.tick(10_000);
+      assert.equal(
+        logs.at(-1),
+        'Extraction extract: still running (20s elapsed; 100 queries completed; 1 objects completed)',
+      );
+      for (const raw of [
+        'null',
+        '{}',
+        'private-secret',
+        '{',
+        JSON.stringify({ version: 1, stage: 'private-secret', event: 'start' }),
+      ])
+        line(raw);
+      if (outcome !== 'success') throw failure;
+      event('extract', 'complete');
+      return 'ok';
+    });
+    if (outcome === 'success') {
+      assert.equal(await result, 'ok');
+      assert.equal(
+        logs.at(-1),
+        'Extraction extract: complete (20s elapsed; 100 queries completed; 1 objects completed)',
+      );
+    } else await assert.rejects(result, (error) => error === failure);
+    const count = logs.length;
+    late(JSON.stringify({ version: 1, stage: 'extract', event: 'start' }));
+    time.tick(30_000);
+    assert.equal(logs.length, count);
+    assert.equal(time.timers.size, 0);
+    assert.doesNotMatch(logs.join(), /private-secret/);
+  });
+}
+
+test('extraction observer failures do not affect child outcome', async () => {
+  const time = fakeClock();
+  assert.equal(
+    await new CloneExtractionProgress(() => {
+      throw Error('logger');
+    }, time.clock).run(async (line) => {
+      line(JSON.stringify({ version: 1, stage: 'extract', event: 'start' }));
+      time.tick(10_000);
+      return 'ok';
+    }),
+    'ok',
+  );
+  assert.equal(time.timers.size, 0);
 });

@@ -1,4 +1,4 @@
-import { formatPreflight } from './clone-progress.js';
+import { CloneExtractionProgress, formatPreflight } from './clone-progress.js';
 import { mkdir, mkdtemp, open, readFile, unlink } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
@@ -149,48 +149,44 @@ export async function cloneDatabase(
       stage(name, 'CLONE_STAGE_FAILED', async () => {
         let publicationCode: string | undefined;
         try {
-          return await run(
-            process.execPath,
-            [
-              '--import',
-              'tsx',
-              join(root, 'src/cli.ts'),
-              name,
-              ...args,
-              '--temp-dir',
-              tempDir,
-            ],
-            {
-              cwd: root,
-              signal,
-              env: {
-                ...childEnvironment(),
-                ...(extraction
-                  ? { ORACLE_PASSWORD: config.source.password }
-                  : {}),
+          const execute = (onProgressLine?: (line: string) => void) =>
+            run(
+              process.execPath,
+              [
+                '--import',
+                'tsx',
+                join(root, 'src/cli.ts'),
+                name,
+                ...args,
+                '--temp-dir',
+                tempDir,
+              ],
+              {
+                cwd: root,
+                signal,
+                env: {
+                  ...childEnvironment(),
+                  ...(extraction
+                    ? { ORACLE_PASSWORD: config.source.password }
+                    : {}),
+                },
+                onProgressLine: onProgressLine
+                  ? ({ stream, line }) => {
+                      if (stream === 'stderr') onProgressLine(line);
+                    }
+                  : undefined,
+                onLine: (line) => {
+                  // Retain known publication codes without exposing filenames or raw errors.
+                  publicationCode ??=
+                    /^(OUTPUT_(?:EXISTS|PATH_CONFLICT|PUBLICATION_UNSUPPORTED|PUBLICATION_FAILED|INCOMPLETE)):/.exec(
+                      line,
+                    )?.[1];
+                },
               },
-              onLine: (line) => {
-                // Retain known publication codes without exposing filenames or raw errors.
-                publicationCode ??=
-                  /^(OUTPUT_(?:EXISTS|PATH_CONFLICT|PUBLICATION_UNSUPPORTED|PUBLICATION_FAILED|INCOMPLETE)):/.exec(
-                    line,
-                  )?.[1];
-                if (!extraction) return;
-                try {
-                  const event = JSON.parse(line);
-                  if (
-                    ['extract', 'connection', 'publication'].includes(
-                      event.stage,
-                    ) &&
-                    ['start', 'complete', 'failure'].includes(event.event)
-                  )
-                    log(`Extraction ${event.stage}: ${event.event}`);
-                } catch {
-                  /* Raw child errors are private. */
-                }
-              },
-            },
-          );
+            );
+          return await (extraction
+            ? new CloneExtractionProgress(log).run(execute)
+            : execute());
         } catch (error) {
           if (
             publicationCode &&

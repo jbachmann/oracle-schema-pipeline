@@ -186,3 +186,65 @@ export class PreflightProgress {
     });
   }
 }
+
+/** Summarize extraction without forwarding identifiers, SQL, or raw child output. */
+export class CloneExtractionProgress {
+  constructor(
+    private readonly log: (line: string) => void,
+    private readonly time: ProgressClock = clock,
+  ) {}
+
+  async run<T>(
+    work: (onLine: (line: string) => void) => Promise<T>,
+  ): Promise<T> {
+    const started = this.time.now();
+    let queries = 0,
+      objects = 0,
+      settled = false;
+    let stage = 'startup';
+    let timer: unknown;
+    const emit = (line: string) => {
+      try {
+        this.log(line);
+      } catch {
+        /* Progress cannot change orchestration. */
+      }
+    };
+    const summary = () =>
+      `${Math.floor(Math.max(0, this.time.now() - started) / 1000)}s elapsed; ${queries} queries completed; ${objects} objects completed`;
+    const heartbeat = () => {
+      if (settled) return;
+      emit(`Extraction ${stage}: still running (${summary()})`);
+      timer = this.time.schedule(heartbeat, 10_000);
+    };
+    const onLine = (line: string) => {
+      if (settled || line.length > 64_000) return;
+      try {
+        const event = JSON.parse(line);
+        if (
+          !event ||
+          event.version !== 1 ||
+          !['start', 'complete', 'failure'].includes(event.event)
+        )
+          return;
+        if (event.stage === 'query' && event.event === 'complete') queries++;
+        if (event.stage === 'object' && event.event === 'complete') objects++;
+        if (['extract', 'connection', 'publication'].includes(event.stage)) {
+          stage = event.stage;
+          emit(
+            `Extraction ${stage}: ${event.event}${event.event === 'start' ? '' : ` (${summary()})`}`,
+          );
+        }
+      } catch {
+        /* Raw child errors are private. */
+      }
+    };
+    timer = this.time.schedule(heartbeat, 10_000);
+    try {
+      return await work(onLine);
+    } finally {
+      settled = true;
+      this.time.cancel(timer);
+    }
+  }
+}

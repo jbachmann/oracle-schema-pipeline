@@ -381,3 +381,48 @@ test('preflight formats safe progress through the injected logger and failure bl
   );
   assert.equal(result.status, 'failed');
 });
+
+test('clone displays extraction summaries from stderr progress records', async () => {
+  const seam = seams(),
+    logs: string[] = [];
+  const run: Runner = async (file, args, options) => {
+    if (args[3] === 'extract') {
+      for (const [stage, event] of [
+        ['extract', 'start'],
+        ['query', 'complete'],
+        ['object', 'complete'],
+        ['extract', 'complete'],
+      ]) {
+        options.onProgressLine?.({
+          stream: 'stderr',
+          line: JSON.stringify({ version: 1, stage, event }),
+        });
+      }
+      options.onProgressLine?.({
+        stream: 'stdout',
+        line: JSON.stringify({
+          version: 1,
+          stage: 'extract',
+          event: 'failure',
+        }),
+      });
+    }
+    return seam.run(file, args, options);
+  };
+  const { result } = await cloneDatabase({
+    root: await fixture(),
+    ...seam,
+    run,
+    log: (line) => logs.push(line),
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.ok(logs.includes('Extraction extract: start'));
+  assert.ok(
+    logs.some((line) =>
+      /Extraction extract: complete .*1 queries completed; 1 objects completed/.test(
+        line,
+      ),
+    ),
+  );
+  assert.ok(!logs.some((line) => line.includes('Extraction extract: failure')));
+});
