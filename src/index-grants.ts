@@ -36,6 +36,7 @@ export function indexRequirements(document: TargetDocument): {
         dependencyTypes.set(key, types);
       }
       for (const edge of index.dependencies) {
+        if (edge.oracleMaintained && !edge.databaseLink) continue;
         const error = (code: string, message: string) =>
           diagnostics.push({
             severity: 'error',
@@ -71,13 +72,18 @@ export function indexRequirements(document: TargetDocument): {
           item.type === edge.type &&
           objectKey(item.reference) === objectKey(edge.reference);
         if (
-          !document.prerequisites.some(
+          !document.programs.some(
+            (program) =>
+              program.kind.toUpperCase() === edge.type &&
+              objectKey(program.reference) === objectKey(edge.reference),
+          ) &&
+          (!document.prerequisites.some(
             (item) =>
               matches(item) &&
               item.databaseLink === null &&
               objectKey(item.requiredBy) === objectKey(table.reference),
           ) ||
-          !document.policy.externalPrerequisites.some(matches)
+            !document.policy.externalPrerequisites.some(matches))
         ) {
           error(
             'UNACKNOWLEDGED_PREREQUISITE',

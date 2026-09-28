@@ -1,3 +1,4 @@
+import { programRequirements } from './program-grants.js';
 import { indexRequirements } from './index-grants.js';
 import { analyzeTarget } from './semantic.js';
 import { prepareSql } from './prepare.js';
@@ -18,7 +19,14 @@ export function validateTarget(input: unknown): Diagnostic[] {
 
 function validateParsedTarget(document: TargetDocument) {
   const diagnostics: Diagnostic[] = [
-    ...document.diagnostics.filter((item) => item.severity !== 'change'),
+    ...document.diagnostics.filter(
+      (item) =>
+        item.severity !== 'change' &&
+        !(
+          item.severity === 'warning' &&
+          item.code === 'PLSQL_RUNTIME_DEPENDENCIES'
+        ),
+    ),
   ];
   const error = (code: string, object: string, message: string): void => {
     diagnostics.push({ severity: 'error', code, object, message });
@@ -47,7 +55,10 @@ function validateParsedTarget(document: TargetDocument) {
       error,
     );
   }
-  diagnostics.push(...indexRequirements(document).diagnostics);
+  diagnostics.push(
+    ...indexRequirements(document).diagnostics,
+    ...programRequirements(document).diagnostics,
+  );
   validatePrerequisites(document, error);
   const preparation = prepareSql(document, analysis);
   diagnostics.push(...preparation.diagnostics);
@@ -375,11 +386,32 @@ function validatePrerequisites(
   error: ReportError,
 ): void {
   for (const prerequisite of document.prerequisites) {
-    const allowed = document.policy.externalPrerequisites.some(
-      (item) =>
-        item.type === prerequisite.type &&
-        objectKey(item.reference) === objectKey(prerequisite.reference),
-    );
+    if (prerequisite.oracleMaintained && !prerequisite.databaseLink) continue;
+    const included = [
+      ...document.tables.map((item) => ({
+        reference: item.reference,
+        type: 'TABLE',
+      })),
+      ...document.views.map((item) => ({
+        reference: item.reference,
+        type: 'VIEW',
+      })),
+      ...document.programs.map((item) => ({
+        reference: item.reference,
+        type: item.kind.toUpperCase(),
+      })),
+    ];
+    const allowed =
+      included.some(
+        (item) =>
+          item.type === prerequisite.type &&
+          objectKey(item.reference) === objectKey(prerequisite.reference),
+      ) ||
+      document.policy.externalPrerequisites.some(
+        (item) =>
+          item.type === prerequisite.type &&
+          objectKey(item.reference) === objectKey(prerequisite.reference),
+      );
     if (prerequisite.databaseLink) {
       error(
         'REMOTE_PREREQUISITE',

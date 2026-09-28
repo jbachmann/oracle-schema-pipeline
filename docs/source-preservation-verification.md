@@ -63,3 +63,10 @@ configuration remains pointed at the test source.
 The first attempt stopped before cloning because the listener accepted
 connections before fixture initialization completed. The helper now waits for the
 seed completion marker directly before inserting sample rows or taking a baseline.
+
+PL/SQL snapshots also include ordered source catalog rows and compilation settings
+for every inspected application owner. Extraction never compiles source units or
+calls their entry points. Program replay tests invoke harmless fixtures only on the
+explicit test destination. Compare source bodies byte-for-byte except the declared
+header qualification and Oracle's observed source-envelope normalization; never
+normalize literals or whitespace inside bodies to make a comparison pass.

@@ -53,6 +53,8 @@ export async function snapshot(connection: Connection) {
   // Stable metadata, including object identities/timestamps, detects DDL even
   // when an object is dropped and recreated with an identical definition.
   const queries = {
+    programSource: `SELECT owner,name,type,line,text FROM dba_source WHERE owner IN (${ownerList})`,
+    programSettings: `SELECT owner,name,type,plsql_optimize_level,plsql_code_type,plsql_debug,plsql_warnings,nls_length_semantics,plsql_ccflags,plscope_settings FROM dba_plsql_object_settings WHERE owner IN (${ownerList})`,
     objects: `SELECT owner,object_name,subobject_name,object_id,data_object_id,object_type,created,last_ddl_time,status FROM dba_objects WHERE owner IN (${ownerList})`,
     columns: `SELECT owner,table_name,column_name,column_id,data_type,data_type_owner,data_length,data_precision,data_scale,nullable,data_default,char_length,char_used,virtual_column,identity_column FROM dba_tab_cols WHERE owner IN (${ownerList})`,
     constraints: `SELECT owner,constraint_name,constraint_type,table_name,search_condition,r_owner,r_constraint_name,delete_rule,status,deferrable,deferred,validated,generated FROM dba_constraints WHERE owner IN (${ownerList})`,

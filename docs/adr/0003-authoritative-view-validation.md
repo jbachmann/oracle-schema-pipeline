@@ -60,3 +60,7 @@ is introduced. Checks run per operation without constructing a second full scrip
 for validation, leaving room for future streaming. Transform/validate semantic
 errors still use exit 2, generation failure uses exit 1, and publication stays
 non-overwriting. The JSON contract and supported SQL output remain unchanged.
+
+ADR 0009 extends internally resolved dependencies to included PL/SQL programs and
+adds program-context closure while preserving legacy table/view root scope. Its
+operation graph supersedes view-only ordering when programs are included.

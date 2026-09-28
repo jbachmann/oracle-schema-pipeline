@@ -1,0 +1,8 @@
+{
+  "version": 3,
+  "procedures": [
+    { "owner": "APP", "name": "PROCESS_ONE" },
+    { "owner": "APP", "package": "ORDER_API", "name": "PROCESS_ORDER" }
+  ],
+  "packages": []
+}

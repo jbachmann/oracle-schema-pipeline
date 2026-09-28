@@ -103,6 +103,9 @@ export const dependencyRowSchema = z.object({
   REFERENCED_TYPE: text,
   REFERENCED_LINK_NAME: nullableText,
 });
+export const prerequisiteRowSchema = dependencyRowSchema.extend({
+  DEPENDENCY_ORIGIN: z.enum(['TABLE', 'INDEX']),
+});
 
 export const databaseVersionRowSchema = z.object({ VERSION: text });
 

@@ -73,3 +73,8 @@ activity. Observers must remain fast and synchronous. Existing source-read-only,
 one-hop FK selection, recursive view selection, offline stages, trusted SQL,
 independent generation validation, and non-overwrite invariants remain in force.
 There is no JSON model migration and no exception to ADR 0001's invariants.
+
+ADR 0009 adds the explicit query categories `program`, `program-source`,
+`program-members`, `program-settings`, and `program-dependencies` to event v1.
+Program reads retain bounded sequential access, strict decoding and cache cleanup;
+source text and compilation settings never enter telemetry.

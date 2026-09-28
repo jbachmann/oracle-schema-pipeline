@@ -8,6 +8,7 @@ import {
   commentRowSchema,
   constraintRowSchema,
   dependencyRowSchema,
+  prerequisiteRowSchema,
   identityRowSchema,
   indexRowSchema,
   orderedColumnRowSchema,
@@ -20,9 +21,9 @@ export function catalogQueries(reader: CatalogReader) {
   return {
     prerequisites: {
       category: 'prerequisites',
-      schema: dependencyRowSchema,
+      schema: prerequisiteRowSchema,
       bindNames: ['owner', 'tableName'],
-      sql: `SELECT DISTINCT d.referenced_owner, d.referenced_name, d.referenced_type, d.referenced_link_name
+      sql: `SELECT DISTINCT d.type AS dependency_origin, d.referenced_owner, d.referenced_name, d.referenced_type, d.referenced_link_name
         FROM ${reader.catalogView('dependencies')} d
        /* selection */
        WHERE ((d.owner=:owner AND d.name=:tableName AND d.type='TABLE') OR
@@ -42,7 +43,7 @@ export function catalogQueries(reader: CatalogReader) {
             WHERE identity_column.owner=d.referenced_owner
               AND identity_column.sequence_name=d.referenced_name
               AND d.referenced_type='SEQUENCE')
-       ORDER BY d.referenced_owner, d.referenced_name`,
+       ORDER BY d.referenced_owner, d.referenced_name, d.type`,
     },
     table: {
       category: 'table',

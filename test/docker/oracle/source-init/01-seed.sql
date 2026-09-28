@@ -334,6 +334,53 @@ ALTER TABLE IAM.permissions ADD (
   char_probe VARCHAR2(17 CHAR)
 );
 
+-- Stored-program dependency fixture. No source entry point is executed.
+CREATE FUNCTION IAM.PERMISSION_EXISTS(p_id NUMBER) RETURN NUMBER AUTHID DEFINER AS
+  n NUMBER;
+BEGIN
+  SELECT COUNT(*) INTO n FROM IAM.PERMISSIONS WHERE PERMISSION_ID=p_id;
+  RETURN n;
+END;
+/
+CREATE PACKAGE IAM.PERMISSION_API AUTHID DEFINER AS
+  PROCEDURE PROCESS_PERMISSION(p_id NUMBER);
+  PROCEDURE PROCESS_PERMISSION(p_id NUMBER, p_result OUT NUMBER);
+END;
+/
+CREATE PACKAGE BODY IAM.PERMISSION_API AS
+  calls NUMBER := 0;
+  PROCEDURE TOUCH_PERMISSION(p_id NUMBER) IS
+  BEGIN
+    UPDATE IAM.PERMISSIONS SET ACTION_NAME='PROCESSED' WHERE PERMISSION_ID=p_id;
+  END;
+  PROCEDURE PROCESS_PERMISSION(p_id NUMBER) IS
+  BEGIN
+    IF IAM.PERMISSION_EXISTS(p_id)>0 THEN
+      TOUCH_PERMISSION(p_id);
+      calls := calls+1;
+    END IF;
+  END;
+  PROCEDURE PROCESS_PERMISSION(p_id NUMBER, p_result OUT NUMBER) IS
+  BEGIN
+    PROCESS_PERMISSION(p_id);
+    p_result := calls;
+  END;
+BEGIN
+  calls := 0;
+END;
+/
+CREATE PROCEDURE IAM.PROCESS_PERMISSION(p_id NUMBER) AUTHID DEFINER AS
+BEGIN
+  IAM.PERMISSION_API.PROCESS_PERMISSION(p_id);
+END;
+/
+CREATE PACKAGE IAM.PROGRAM_CONSTANTS AS
+  TYPE result_cursor IS REF CURSOR;
+  ready CONSTANT NUMBER := 1;
+END;
+/
+ALTER USER IAM GRANT CONNECT THROUGH SYSTEM;
+
 -- Integration-test accounts for this disposable example database only.
 -- Real extraction uses an existing supplied account; it never runs this seed,
 -- creates these users, requires proxy authentication, or changes source grants.

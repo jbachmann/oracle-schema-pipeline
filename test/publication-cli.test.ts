@@ -161,8 +161,8 @@ for (const label of ['source', 'policy'] as const) {
           contents = JSON.stringify(document);
           expectedIssue =
             label === 'source'
-              ? /formatVersion: Expected format v5; re-extract older artifacts/
-              : /version: Invalid literal value/;
+              ? /formatVersion: Expected format v6; re-extract older artifacts/
+              : /version: Invalid discriminator value/;
         }
         const path = `${label}.json`;
         await writeFile(join(directory, path), contents);

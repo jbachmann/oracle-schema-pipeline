@@ -9,6 +9,11 @@ import { randomUUID } from 'node:crypto';
 import type { ObjectReference } from './model.js';
 
 export type QueryCategory =
+  | 'program'
+  | 'program-source'
+  | 'program-members'
+  | 'program-settings'
+  | 'program-dependencies'
   | 'database-version'
   | 'constraints'
   | 'constraint-columns'
@@ -58,6 +63,10 @@ export function progressErrorCode(error: unknown): string {
 
   const code = error.code;
   switch (code) {
+    case 'PLSQL_MEMBER_NOT_FOUND':
+    case 'PLSQL_SOURCE_MISMATCH':
+    case 'UNSUPPORTED_PLSQL':
+    case 'UNSUPPORTED_PLSQL_CONDITIONAL':
     case 'CATALOG_UNKNOWN_VALUE':
     case 'CATALOG_CARDINALITY':
     case 'CATALOG_INCOMPLETE_METADATA':

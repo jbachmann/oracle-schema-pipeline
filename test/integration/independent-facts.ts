@@ -179,3 +179,44 @@ export async function assertDestinationBehavior(
     await connection.close();
   }
 }
+
+/** Fixed expectations for the PL/SQL seed, independent of the extracted model. */
+export async function assertIndependentProgramFacts(
+  connection: oracle.Connection,
+) {
+  const objects = await connection.execute<{
+    OBJECT_NAME: string;
+    OBJECT_TYPE: string;
+    STATUS: string;
+  }>(
+    `SELECT object_name,object_type,status FROM dba_objects WHERE owner='IAM'
+      AND object_name IN ('PROCESS_PERMISSION','PERMISSION_EXISTS','PERMISSION_API')
+      ORDER BY object_name,object_type`,
+    {},
+    { outFormat: oracle.OUT_FORMAT_OBJECT },
+  );
+  assert.deepEqual(objects.rows, [
+    { OBJECT_NAME: 'PERMISSION_API', OBJECT_TYPE: 'PACKAGE', STATUS: 'VALID' },
+    {
+      OBJECT_NAME: 'PERMISSION_API',
+      OBJECT_TYPE: 'PACKAGE BODY',
+      STATUS: 'VALID',
+    },
+    {
+      OBJECT_NAME: 'PERMISSION_EXISTS',
+      OBJECT_TYPE: 'FUNCTION',
+      STATUS: 'VALID',
+    },
+    {
+      OBJECT_NAME: 'PROCESS_PERMISSION',
+      OBJECT_TYPE: 'PROCEDURE',
+      STATUS: 'VALID',
+    },
+  ]);
+  const errors = await connection.execute<{ N: number }>(
+    "SELECT COUNT(*) n FROM dba_errors WHERE owner='IAM' AND attribute='ERROR' AND name IN ('PROCESS_PERMISSION','PERMISSION_EXISTS','PERMISSION_API')",
+    {},
+    { outFormat: oracle.OUT_FORMAT_OBJECT },
+  );
+  assert.equal(errors.rows![0].N, 0);
+}

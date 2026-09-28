@@ -1,8 +1,12 @@
 {
-  "formatVersion": 5,
+  "formatVersion": 6,
   "dialect": "oracle",
   "sourceVersion": "19.0.0.0.0",
   "extractedAt": "2026-09-22T00:00:00.000Z",
+  "selectionVersion": 2,
+  "targetProcedures": [],
+  "targetPackages": [],
+  "programs": [],
   "targetTables": [
     {
       "owner": "APP",
@@ -17,7 +21,7 @@
         "name": "CHILD"
       },
       "role": "target",
-      "comment": "Synthetic child table's comment & \u03a9",
+      "comment": "Synthetic child table's comment & Ω",
       "unsupportedFeatures": [],
       "sourcePhysical": {
         "tablespace": "PROD_DATA",
@@ -79,10 +83,7 @@
             "rely": false
           },
           "kind": "primary-key",
-          "columns": [
-            "TENANT_ID",
-            "ID"
-          ],
+          "columns": ["TENANT_ID", "ID"],
           "backingIndex": {
             "owner": "APP",
             "name": "PK_CHILD"
@@ -216,10 +217,7 @@
             "rely": false
           },
           "kind": "primary-key",
-          "columns": [
-            "TENANT_ID",
-            "ID"
-          ],
+          "columns": ["TENANT_ID", "ID"],
           "backingIndex": {
             "owner": "SHARED",
             "name": "PK_PARENT"
@@ -268,7 +266,7 @@
       "severity": "change",
       "code": "OMIT_PARENT_FK",
       "object": "\"SHARED\".\"PARENT\"/FK_PARENT_GRANDPARENT",
-      "message": "Omitted outgoing FK to \"OTHER\".\"GRANDPARENT\" because this table is a parent-only inclusion."
+      "message": "Omitted outgoing FK to \"OTHER\".\"GRANDPARENT\" because this table was included only as a dependency."
     },
     {
       "severity": "change",

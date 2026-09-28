@@ -9,7 +9,7 @@
     "severity": "change",
     "code": "OMIT_PARENT_FK",
     "object": "\"SHARED\".\"PARENT\"/FK_PARENT_GRANDPARENT",
-    "message": "Omitted outgoing FK to \"OTHER\".\"GRANDPARENT\" because this table is a parent-only inclusion."
+    "message": "Omitted outgoing FK to \"OTHER\".\"GRANDPARENT\" because this table was included only as a dependency."
   },
   {
     "severity": "change",

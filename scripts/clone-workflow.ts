@@ -1,3 +1,5 @@
+import type { ProgramCompilerContext } from './process.js';
+import { orderedProgramUnits } from '../src/program-units.js';
 import { prepareRetryInput, RetryInputError } from './clone-retry-input.js';
 import { CloneExtractionProgress, formatPreflight } from './clone-progress.js';
 import { mkdir, mkdtemp, open, readFile, unlink } from 'node:fs/promises';
@@ -94,6 +96,7 @@ async function runCloneAttempt(
   const lock = options.lockPath ?? cloneLockPath;
   const runId = randomUUID();
   let owned = false;
+  let programDetails: string[] = [];
   let setupDetails: string[] = [];
   const result: RunResult = {
     version: 1,
@@ -325,13 +328,30 @@ async function runCloneAttempt(
       await stage('prerequisite', 'CLONE_PREREQUISITE_FAILED', () =>
         destination.sql(prerequisite.toString('utf8')),
       );
+    programDetails = orderedProgramUnits(target).map(
+      ({ program, unit }) =>
+        `${JSON.stringify(program.reference.owner)}.${JSON.stringify(program.reference.name)} ${unit.type}`,
+    );
     setupDetails = setupRequirements(target).map((item) => item.detail);
     await stage('setup-verification', 'CLONE_PREREQUISITE_FAILED', () =>
       destination.sql(setupChecks(target)),
     );
-    await stage('replay', 'CLONE_REPLAY_FAILED', () => destination.sql(sql));
+    const seenWarnings = new Set<string>();
+    const reportWarning = (warning: ProgramCompilerContext) => {
+      const identity = programDetails[warning.operationIndex];
+      const key = JSON.stringify(warning);
+      if (identity && !seenWarnings.has(key)) {
+        seenWarnings.add(key);
+        log(
+          `PLSQL_COMPILE_WARNING: ${identity}; line ${warning.line}, position ${warning.position}, message ${warning.messageNumber}.`,
+        );
+      }
+    };
+    await stage('replay', 'CLONE_REPLAY_FAILED', () =>
+      destination.sql(sql, reportWarning),
+    );
     await stage('verification', 'CLONE_VERIFICATION_FAILED', () =>
-      destination.sql(verificationChecks(target)),
+      destination.sql(verificationChecks(target), reportWarning),
     );
     result.status = 'succeeded';
     log(`Local listener: 127.0.0.1:${config.destination.port}/FREEPDB1`);
@@ -365,6 +385,12 @@ async function runCloneAttempt(
     ) {
       result.errorDetail =
         'prerequisiteSql failed before setup verification. Check the reported Oracle codes and correct the prerequisite SQL for FREEPDB1.';
+    }
+    if (error instanceof CloneError && error.sqlDiagnostics?.programFailure) {
+      const failure = error.sqlDiagnostics.programFailure;
+      const identity = programDetails[failure.operationIndex];
+      if (identity)
+        result.errorDetail = `PLSQL_COMPILE_FAILED: ${identity}; line ${failure.line}, position ${failure.position}, message ${failure.messageNumber}.`;
     }
     if (result.errorDetail) log(result.errorDetail);
     if (result.oracleErrorCodes)

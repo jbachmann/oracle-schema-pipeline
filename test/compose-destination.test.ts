@@ -101,7 +101,7 @@ test('conflicting container identity and failed volume removal fail closed', asy
 test('generated preamble cannot override replay error handling; body remains byte-for-byte', () => {
   const prefix =
     [
-      '-- Generated from oracle-schema-pipeline format 5. No source DDL was replayed.',
+      '-- Generated from oracle-schema-pipeline format 6. Reconstructed from catalog metadata and captured source text.',
       'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
       'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
       'SET DEFINE OFF',
@@ -418,4 +418,53 @@ test('SQL diagnostic parser rejects unknown text and preserves interruption', as
       },
     );
   }
+});
+
+test('program compilation markers retain only numeric context and warnings do not fail replay', async () => {
+  const warnings: unknown[] = [];
+  const destination = new ComposeDestination(
+    '/repo',
+    { password: 'secret', port: 1524, startupTimeoutSeconds: 5 },
+    undefined,
+    async (_, __, options) => {
+      options.onProgressLine?.({
+        stream: 'stdout',
+        line: 'PLSQL_COMPILE_WARNING:2:7:3:6002',
+      });
+      options.onProgressLine?.({
+        stream: 'stdout',
+        line: 'PLSQL_COMPILE_WARNING:2:7:3:6002 secret source',
+      });
+      return 'PLSQL_COMPILE_WARNING:2:7:3:6002\n';
+    },
+  );
+  await destination.sql('SELECT 1 FROM dual;', (warning) =>
+    warnings.push(warning),
+  );
+  assert.deepEqual(warnings, [
+    { operationIndex: 2, line: 7, position: 3, messageNumber: 6002 },
+  ]);
+  const failure = new ComposeDestination(
+    '/repo',
+    { password: 'secret', port: 1524, startupTimeoutSeconds: 5 },
+    undefined,
+    async (_, __, options) => {
+      options.onProgressLine?.({
+        stream: 'stdout',
+        line: 'ORA-20020: PLSQL_COMPILE_FAILED:4:9:2:201',
+      });
+      throw new CloneError('CLONE_STAGE_FAILED', 1);
+    },
+  );
+  await assert.rejects(failure.sql('SELECT 1 FROM dual;'), (error: unknown) => {
+    assert.ok(error instanceof CloneError);
+    assert.deepEqual(error.sqlDiagnostics?.programFailure, {
+      operationIndex: 4,
+      line: 9,
+      position: 2,
+      messageNumber: 201,
+    });
+    assert.doesNotMatch(JSON.stringify(error), /secret|source/u);
+    return true;
+  });
 });

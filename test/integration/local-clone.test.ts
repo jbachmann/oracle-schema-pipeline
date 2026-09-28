@@ -297,11 +297,16 @@ test(
       ],
       {
         env: childEnvironment(),
-        input: `WHENEVER SQLERROR EXIT 1\nALTER SESSION SET CONTAINER=FREEPDB1;\nCREATE USER CLONE_FIXTURE NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE USER CLONE_INDEX NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE TABLE CLONE_FIXTURE.T (ID NUMBER, LABEL VARCHAR2(40));\nCREATE UNIQUE INDEX CLONE_INDEX.T_PK ON CLONE_FIXTURE.T(ID);\nALTER TABLE CLONE_FIXTURE.T ADD CONSTRAINT T_PK PRIMARY KEY(ID) USING INDEX CLONE_INDEX.T_PK;\nCOMMENT ON TABLE CLONE_FIXTURE.T IS 'clone table';\nCOMMENT ON COLUMN CLONE_FIXTURE.T.LABEL IS 'clone label';\nINSERT INTO CLONE_FIXTURE.T VALUES (1, 'source row');\nCREATE VIEW CLONE_FIXTURE.V AS SELECT ID, LABEL FROM CLONE_FIXTURE.T;\nCREATE SEQUENCE CLONE_FIXTURE.EXTERNAL_SEQ;\nCREATE TABLE CLONE_FIXTURE.WITH_DEFAULT (ID NUMBER DEFAULT CLONE_FIXTURE.EXTERNAL_SEQ.NEXTVAL);\nCREATE INDEX CLONE_INDEX.DEFAULT_IX ON CLONE_FIXTURE.WITH_DEFAULT(ID);\nCOMMIT;\nEXIT\n`,
+        input: `WHENEVER SQLERROR EXIT 1\nALTER SESSION SET CONTAINER=FREEPDB1;\nCREATE USER CLONE_FIXTURE NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE USER CLONE_INDEX NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE TABLE CLONE_FIXTURE.T (ID NUMBER, LABEL VARCHAR2(40));\nCREATE UNIQUE INDEX CLONE_INDEX.T_PK ON CLONE_FIXTURE.T(ID);\nALTER TABLE CLONE_FIXTURE.T ADD CONSTRAINT T_PK PRIMARY KEY(ID) USING INDEX CLONE_INDEX.T_PK;\nCOMMENT ON TABLE CLONE_FIXTURE.T IS 'clone table';\nCOMMENT ON COLUMN CLONE_FIXTURE.T.LABEL IS 'clone label';\nINSERT INTO CLONE_FIXTURE.T VALUES (1, 'source row');\nCREATE VIEW CLONE_FIXTURE.V AS SELECT ID, LABEL FROM CLONE_FIXTURE.T;\nCREATE FUNCTION CLONE_FIXTURE.F RETURN NUMBER AS n NUMBER; BEGIN SELECT COUNT(*) INTO n FROM CLONE_FIXTURE.T; RETURN n; END;\n/\nCREATE PACKAGE CLONE_FIXTURE.API AS PROCEDURE P(n OUT NUMBER); END;\n/\nCREATE PACKAGE BODY CLONE_FIXTURE.API AS PROCEDURE P(n OUT NUMBER) IS BEGIN n:=CLONE_FIXTURE.F; END; END;\n/\nCREATE PROCEDURE CLONE_FIXTURE.P(n OUT NUMBER) AS BEGIN CLONE_FIXTURE.API.P(n); END;\n/\nCREATE SEQUENCE CLONE_FIXTURE.EXTERNAL_SEQ;\nCREATE TABLE CLONE_FIXTURE.WITH_DEFAULT (ID NUMBER DEFAULT CLONE_FIXTURE.EXTERNAL_SEQ.NEXTVAL);\nCREATE INDEX CLONE_INDEX.DEFAULT_IX ON CLONE_FIXTURE.WITH_DEFAULT(ID);\nCOMMIT;\nEXIT\n`,
       },
     );
     const selection = {
-      version: 2,
+      version: 3,
+      procedures: [
+        { owner: 'CLONE_FIXTURE', name: 'P' },
+        { owner: 'CLONE_FIXTURE', package: 'API', name: 'P' },
+      ],
+      packages: [],
       tables: [{ owner: 'CLONE_FIXTURE', name: 'T' }],
       views: [{ owner: 'CLONE_FIXTURE', name: 'V' }],
     };
@@ -315,23 +320,35 @@ test(
       password: config.source.password,
       connectString: sourceDsn,
     });
-    const sourceFacts = async () =>
-      (await source.execute('SELECT * FROM CLONE_FIXTURE.T')).rows;
+    const sourceFacts = async () => ({
+      rows: (await source.execute('SELECT * FROM CLONE_FIXTURE.T')).rows,
+      programs: (
+        await source.execute(
+          "SELECT name,type,line,text FROM dba_source WHERE owner='CLONE_FIXTURE' ORDER BY name,type,line",
+        )
+      ).rows,
+      settings: (
+        await source.execute(
+          "SELECT name,type,plsql_optimize_level,plsql_code_type,plsql_debug,plsql_warnings,nls_length_semantics,plsql_ccflags,plscope_settings FROM dba_plsql_object_settings WHERE owner='CLONE_FIXTURE' ORDER BY name,type",
+        )
+      ).rows,
+    });
     const before = await sourceFacts();
     let destination: ComposeDestination | undefined;
     try {
       const first = await cloneDatabase({ root });
-      assert.equal(
-        first.result.status,
-        'succeeded',
-        JSON.stringify(first.result),
-      );
       destination = new ComposeDestination(
         root,
         (await loadCloneConfig(join(root, 'config/local/config.json'))).config
           .destination,
       );
       await destination.preflight();
+      assert.equal(
+        first.result.status,
+        'succeeded',
+        JSON.stringify(first.result),
+      );
+
       await destination.sql('CREATE TABLE CLONE_FIXTURE.SENTINEL (ID NUMBER);');
       await assert.rejects(
         destination.sql(
@@ -552,6 +569,20 @@ test(
         connectString: '127.0.0.1:1529/FREEPDB1',
       });
       try {
+        const programResult = await retryConnection.execute(
+          'BEGIN CLONE_FIXTURE.P(:n); END;',
+          { n: { dir: oracle.BIND_OUT, type: oracle.NUMBER } },
+        );
+        assert.deepEqual(programResult.outBinds, { n: 0 });
+        assert.deepEqual(
+          (
+            await retryConnection.execute(
+              "SELECT COUNT(*) FROM dba_objects WHERE owner='CLONE_FIXTURE' AND object_type IN ('PROCEDURE','FUNCTION','PACKAGE','PACKAGE BODY') AND status='VALID'",
+            )
+          ).rows,
+          [[4]],
+        );
+
         assert.deepEqual(
           (
             await retryConnection.execute(

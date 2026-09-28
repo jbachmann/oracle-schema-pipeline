@@ -1,3 +1,5 @@
+import { analyzePrograms } from './program-semantics.js';
+import { programRequirements, renderProgramGrant } from './program-grants.js';
 /**
  * Converts extracted Oracle schema metadata into a reviewable Oracle 23 target
  * document without changing the source or connecting to a database. It attaches
@@ -49,6 +51,43 @@ export function transformSource(
       message: renderIndexGrant(grant),
     })),
   );
+  target.diagnostics.push(
+    ...target.programs.map((program): Diagnostic => ({
+      severity: 'change',
+      code:
+        program.kind === 'package' && program.role === 'target'
+          ? 'PLSQL_PACKAGE_INCLUDED'
+          : 'PLSQL_DEPENDENCY_INCLUDED',
+      object: qualifiedName(program.reference),
+      message:
+        program.kind === 'package'
+          ? 'Included the whole package specification and available body, including all members and initialization.'
+          : 'Included program and its captured supported dependency closure.',
+    })),
+    ...programRequirements(target).grants.map((grant): Diagnostic => ({
+      severity: 'change',
+      code: 'PLSQL_REQUIRED_GRANT_ADDED',
+      object: qualifiedName(grant.reference),
+      message: renderProgramGrant(grant),
+    })),
+  );
+  const programReachability = analyzePrograms(target);
+  target.diagnostics.push(
+    ...[
+      ...target.tables.filter((table) => table.role === 'program-dependency'),
+      ...target.views.filter(
+        (view) =>
+          view.role === 'dependency' &&
+          programReachability.reachableViews.has(objectKey(view.reference)),
+      ),
+    ].map((item): Diagnostic => ({
+      severity: 'change',
+      code: 'PLSQL_DEPENDENCY_INCLUDED',
+      object: qualifiedName(item.reference),
+      message:
+        'Included a table or view reached through recorded program dependencies.',
+    })),
+  );
   return target;
 }
 
@@ -72,7 +111,7 @@ function transformTable(
         severity: 'change',
         code: 'OMIT_PARENT_FK',
         object: `${tableName}/${constraint.name}`,
-        message: `Omitted outgoing FK to ${qualifiedName(constraint.parentTable)} because this table is a parent-only inclusion.`,
+        message: `Omitted outgoing FK to ${qualifiedName(constraint.parentTable)} because this table was included only as a dependency.`,
       });
     } else {
       constraints.push(constraint);

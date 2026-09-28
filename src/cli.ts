@@ -93,6 +93,8 @@ async function main(): Promise<void> {
   npm run schema -- generate --input target.json --output clone.sql
   npm run schema -- dictionary --input source.json --output dictionary.xlsx
 
+Objects accept selection v2 (tables/views) or v3 (tables/views/procedures/packages).
+Policy v2 adds explicit plsqlObjectGrants; policy v1 remains accepted.
 Extract accepts --progress-json for versioned JSON-lines progress on stderr.
 Only extract connects to Oracle. Catalog scope: all (default) or dba.
 Connection arguments may be visible to local processes; never include passwords.
@@ -184,7 +186,7 @@ Unsupported models never produce SQL.`);
         writeJson(values.output!, source, publicationOptions),
       );
       console.log(
-        `Extracted ${source.tables.length} table definitions to ${values.output}.`,
+        `Extracted ${source.tables.length} table definitions, ${source.views.length} view definitions, and ${source.programs.length} program definitions to ${values.output}.`,
       );
     } finally {
       await connection.close();

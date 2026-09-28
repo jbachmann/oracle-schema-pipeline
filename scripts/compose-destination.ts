@@ -1,8 +1,12 @@
+import { orderedProgramUnits } from '../src/program-units.js';
+import { renderProgramAssertion } from '../src/plsql-ddl.js';
+import { programRequirements } from '../src/program-grants.js';
+import { sqlPreamble } from '../src/sql-preamble.js';
 import { schemaOwners } from '../src/schema-owners.js';
 import { indexRequirements } from '../src/index-grants.js';
 import { join } from 'node:path';
 import { PreflightProgress, type PreflightObserver } from './clone-progress.js';
-import type { CommandOptions } from './process.js';
+import type { CommandOptions, ProgramCompilerContext } from './process.js';
 import type { TargetDocument } from '../src/model.js';
 import type { DestinationSettings } from './clone-config.js';
 import {
@@ -23,15 +27,7 @@ export function assertLocalEndpoint(endpoint: string): void {
 }
 /** Adapt only the exact generated client preamble; source SQL remains opaque. */
 export function generatedReplay(sql: string): string {
-  const prefix =
-    [
-      '-- Generated from oracle-schema-pipeline format 5. No source DDL was replayed.',
-      'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
-      'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
-      'SET DEFINE OFF',
-      'SET SQLBLANKLINES ON',
-      'SET ECHO ON',
-    ].join('\n\n') + '\n\n';
+  const prefix = sqlPreamble.join('\n\n') + '\n\n';
   if (!sql.startsWith(prefix)) throw new CloneError('CLONE_STAGE_FAILED');
   return 'SET SQLBLANKLINES ON\n' + sql.slice(prefix.length);
 }
@@ -121,8 +117,14 @@ export function verificationChecks(target: TargetDocument): string {
         ),
       ])
       .join('') +
-    indexRequirements(target)
-      .grants.map((grant) =>
+    orderedProgramUnits(target)
+      .map(({ program, unit }, index) =>
+        renderProgramAssertion(program.reference, unit.type, index),
+      )
+      .join('\n') +
+    '\n' +
+    [...indexRequirements(target).grants, ...programRequirements(target).grants]
+      .map((grant) =>
         countCheck(
           `dual WHERE EXISTS (SELECT 1 FROM dba_tab_privs WHERE owner=${literal(grant.reference.owner)} AND table_name=${literal(grant.reference.name)} AND grantee=${literal(grant.grantee)} AND privilege=${literal(grant.privilege)})`,
           1,
@@ -136,7 +138,10 @@ export interface Destination {
   identity(): Promise<void>;
   reset(): Promise<void>;
   start(): Promise<void>;
-  sql(sql: string): Promise<void>;
+  sql(
+    sql: string,
+    onWarning?: (warning: ProgramCompilerContext) => void,
+  ): Promise<void>;
 }
 export class ComposeDestination implements Destination {
   private endpoint = '';
@@ -351,8 +356,12 @@ export class ComposeDestination implements Destination {
       countCheck("v$pdbs WHERE name='FREEPDB1' AND open_mode='READ WRITE'", 1),
     );
   }
-  async sql(sql: string): Promise<void> {
-    const diagnostics: { oracleCodes: string[]; setupCheckIndex?: number } = {
+  async sql(
+    sql: string,
+    onWarning?: (warning: ProgramCompilerContext) => void,
+  ): Promise<void> {
+    const warnings = new Set<string>();
+    const diagnostics: NonNullable<CloneError['sqlDiagnostics']> = {
       oracleCodes: [],
     };
     const inspect = (line: string) => {
@@ -363,6 +372,29 @@ export class ComposeDestination implements Destination {
         )
           diagnostics.oracleCodes.push(code);
       }
+      const warning = /^PLSQL_COMPILE_WARNING:(\d+):(\d+):(\d+):(\d+)\s*$/.exec(
+        line.trim(),
+      );
+      if (warning && !warnings.has(warning[0])) {
+        warnings.add(warning[0]);
+        onWarning?.({
+          operationIndex: Number(warning[1]),
+          line: Number(warning[2]),
+          position: Number(warning[3]),
+          messageNumber: Number(warning[4]),
+        });
+      }
+      const program =
+        /^ORA-20020: PLSQL_COMPILE_FAILED:(\d+):(\d+):(\d+):(\d+)\s*$/.exec(
+          line.trim(),
+        );
+      if (program && !diagnostics.programFailure)
+        diagnostics.programFailure = {
+          operationIndex: Number(program[1]),
+          line: Number(program[2]),
+          position: Number(program[3]),
+          messageNumber: Number(program[4]),
+        };
       const check = /^ORA-20001: OSP_SETUP_CHECK_(\d+)\s*$/.exec(line.trim());
       if (check && diagnostics.setupCheckIndex === undefined)
         diagnostics.setupCheckIndex = Number(check[1]);

@@ -1,6 +1,13 @@
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 
+export interface ProgramCompilerContext {
+  operationIndex: number;
+  line: number;
+  position: number;
+  messageNumber: number;
+}
+
 export class CloneError extends Error {
   constructor(
     public readonly code: string,
@@ -8,6 +15,7 @@ export class CloneError extends Error {
     public readonly sqlDiagnostics?: {
       oracleCodes: string[];
       setupCheckIndex?: number;
+      programFailure?: ProgramCompilerContext;
     },
   ) {
     super(code);

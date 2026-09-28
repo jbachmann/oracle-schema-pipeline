@@ -11,15 +11,18 @@ select (select count(*) from dba_users
          where username in ('IAM','CATALOG','COMMERCE','FINANCE')) || ':' ||
        (select count(*) from dba_sequences
          where sequence_owner = 'IAM'
-           and sequence_name = 'SOURCE_SEED_COMPLETE')
+           and sequence_name = 'SOURCE_SEED_COMPLETE') || ':' ||
+       (select count(*) from dba_objects where owner='IAM'
+         and object_name in ('PERMISSION_EXISTS','PERMISSION_API','PROCESS_PERMISSION','PROGRAM_CONSTANTS')
+         and object_type in ('FUNCTION','PROCEDURE','PACKAGE','PACKAGE BODY') and status='VALID')
 from dual;
 exit" | "$ORACLE_HOME/bin/sqlplus" -s "/ as sysdba" | tr -d '[:space:]')
 
-if [ "$seed_state" = "0:0" ]; then
+if [ "$seed_state" = "0:0:0" ]; then
   echo "No seed schemas found; seeding source database"
   "$ORACLE_HOME/bin/sqlplus" -s "/ as sysdba" \
     @/opt/oracle/scripts/custom/01-seed.sql
-elif [ "$seed_state" = "4:1" ]; then
+elif [ "$seed_state" = "4:1:5" ]; then
   echo "Source seed already present; skipping"
 else
   echo "Incomplete source seed detected ($seed_state); rebuilding seed schemas"
@@ -29,7 +32,8 @@ ALTER SESSION SET CONTAINER = FREEPDB1;
 BEGIN
   FOR schema_name IN (
     SELECT column_value AS username
-    FROM TABLE(sys.odcivarchar2list('LIMITED_READER', 'SCHEMA_READER', 'FINANCE', 'COMMERCE', 'CATALOG', 'IAM'))
+    FROM TABLE(sys.odcivarchar2list('LIMITED_READER', 'SCHEMA_READER', 'FINANCE', 'COMMERCE', 'CATALOG', 'IAM', 'INDEX_SCHEMA'))
+    ORDER BY CASE WHEN column_value='INDEX_SCHEMA' THEN 1 ELSE 0 END
   ) LOOP
     BEGIN
       EXECUTE IMMEDIATE 'DROP USER ' || schema_name.username || ' CASCADE';

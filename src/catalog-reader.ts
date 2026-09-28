@@ -15,6 +15,13 @@ import { memberRowSchema } from './catalog-schemas.js';
 
 export type CatalogScope = 'all' | 'dba';
 const catalogViews = {
+  source: { all: 'all_source', dba: 'dba_source' },
+  procedures: { all: 'all_procedures', dba: 'dba_procedures' },
+  arguments: { all: 'all_arguments', dba: 'dba_arguments' },
+  programSettings: {
+    all: 'all_plsql_object_settings',
+    dba: 'dba_plsql_object_settings',
+  },
   constraints: { all: 'all_constraints', dba: 'dba_constraints' },
   consColumns: { all: 'all_cons_columns', dba: 'dba_cons_columns' },
   tables: { all: 'all_tables', dba: 'dba_tables' },
@@ -244,6 +251,7 @@ export class CatalogReader {
     const named = Array.isArray(binds) ? {} : binds;
     const owner = named.owner;
     const name =
+      named.programName ??
       named.tableName ??
       named.viewName ??
       named.constraintName ??

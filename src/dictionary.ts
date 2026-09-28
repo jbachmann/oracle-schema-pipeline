@@ -16,6 +16,8 @@ export const dictionarySheetOrder = [
   'Indexes',
   'Views',
   'View Dependencies',
+  'Programs',
+  'Program Dependencies',
   'Prerequisites',
   'Diagnostics',
 ] as const;
@@ -129,6 +131,10 @@ function buildSheetDefinitions(source: SourceDocument): SheetDefinition[] {
         ['Extraction timestamp', source.extractedAt],
         ['Target table count', source.targetTables.length],
         ['Target view count', source.targetViews.length],
+        ['Selection version', source.selectionVersion],
+        ['Target procedure count', source.targetProcedures.length],
+        ['Target package count', source.targetPackages.length],
+        ['Included program count', source.programs.length],
         ['Included table count', source.tables.length],
         ['Included view count', source.views.length],
         ['Prerequisite count', source.prerequisites.length],
@@ -351,6 +357,68 @@ function buildSheetDefinitions(source: SourceDocument): SheetDefinition[] {
           dependency.databaseLink,
         ]),
       ),
+    },
+    {
+      name: 'Programs',
+      headers: [
+        'Owner',
+        'Name',
+        'Kind',
+        'Role',
+        'AUTHID',
+        'Unit',
+        'Status',
+        'Editionable',
+        'Body Required',
+      ],
+      rows: [...source.programs]
+        .sort((a, b) => compareText(referenceKey(a), referenceKey(b)))
+        .flatMap((program) =>
+          program.units.map((unit) => [
+            program.reference.owner,
+            program.reference.name,
+            program.kind,
+            program.role,
+            program.authid,
+            unit.type,
+            unit.status,
+            booleanText(program.editionable),
+            program.kind === 'package'
+              ? booleanText(program.bodyRequired)
+              : null,
+          ]),
+        ),
+      wrappedHeaders: [],
+    },
+    {
+      name: 'Program Dependencies',
+      headers: [
+        'Owner',
+        'Name',
+        'Unit',
+        'Referenced Owner',
+        'Referenced Name',
+        'Type',
+        'Database Link',
+        'Oracle Maintained',
+      ],
+      rows: [...source.programs]
+        .sort((a, b) => compareText(referenceKey(a), referenceKey(b)))
+        .flatMap((program) =>
+          program.units.flatMap((unit) =>
+            unit.dependencies.map((edge) => [
+              program.reference.owner,
+              program.reference.name,
+              unit.type,
+              edge.reference.owner,
+              edge.reference.name,
+              edge.type,
+              edge.databaseLink,
+              booleanText(edge.oracleMaintained),
+            ]),
+          ),
+        ),
+      wrappedHeaders: [],
     },
     {
       name: 'Prerequisites',

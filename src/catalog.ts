@@ -1,3 +1,4 @@
+import { readProgram, classifyProgramDependency } from './catalog-programs.js';
 /**
  * Adapts Oracle's read-only catalog metadata to the SourceCatalog interface used
  * by extraction. Each adapter shares one query reader and one constraint cache
@@ -27,6 +28,7 @@ import {
   type Prerequisite,
   type TableDefinition,
   type ViewDefinition,
+  type ProgramDefinition,
 } from './model.js';
 import { uniqueRows, singleRow } from './catalog-decoding.js';
 import { databaseVersionRowSchema } from './catalog-schemas.js';
@@ -36,6 +38,7 @@ export type { CatalogScope } from './catalog-reader.js';
 export class OracleCatalog implements SourceCatalog {
   private readonly reader: CatalogReader;
   private readonly constraints: ConstraintReader;
+  private readonly programs = new Map<string, ProgramDefinition>();
   private readonly tables = new Map<string, TableDefinition>();
   private readonly tablePrerequisites = new Map<string, Prerequisite[]>();
   private readonly views = new Map<string, ViewDefinition>();
@@ -52,6 +55,35 @@ export class OracleCatalog implements SourceCatalog {
   ) {
     this.reader = new CatalogReader(connection, scope, progress, batchSize);
     this.constraints = new ConstraintReader(this.reader);
+  }
+
+  async program(reference: ObjectReference) {
+    const key = objectKey(reference);
+    const cached = this.programs.get(key);
+    if (cached) {
+      this.programs.delete(key);
+      return cached;
+    }
+    return readProgram(this.reader, reference);
+  }
+
+  async prefetchPrograms(references: ObjectReference[]): Promise<void> {
+    for (const batch of this.reader.batches(
+      references.filter(
+        (reference) => !this.programs.has(objectKey(reference)),
+      ),
+    )) {
+      // Publish only complete batches. A failed member leaves no partial cache.
+      const staged: ProgramDefinition[] = [];
+      for (const reference of batch)
+        staged.push(await readProgram(this.reader, reference));
+      for (const program of staged)
+        this.programs.set(objectKey(program.reference), program);
+    }
+  }
+
+  oracleMaintained(reference: ObjectReference, type: string) {
+    return classifyProgramDependency(this.reader, reference, type);
   }
 
   async foreignKeys(table: ObjectReference): Promise<ForeignKeyDefinition[]> {
@@ -250,6 +282,7 @@ export class OracleCatalog implements SourceCatalog {
     uniqueRows(
       rows,
       [
+        'DEPENDENCY_ORIGIN',
         'REFERENCED_OWNER',
         'REFERENCED_NAME',
         'REFERENCED_TYPE',
@@ -259,6 +292,7 @@ export class OracleCatalog implements SourceCatalog {
     );
     return rows.map((row) => ({
       requiredBy: table,
+      origin: row.DEPENDENCY_ORIGIN,
       reference: {
         owner: row.REFERENCED_OWNER ?? 'PUBLIC',
         name: row.REFERENCED_NAME,

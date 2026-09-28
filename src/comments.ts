@@ -41,7 +41,10 @@ function renderUnicodeCharacter(character: string): string {
  * Quoted chunks hold ASCII text, CHR preserves line breaks, and UNISTR represents
  * Unicode without embedding non-ASCII characters in the generated script.
  */
-function renderSqlStringParts(value: string): string[] {
+export function renderSqlStringParts(
+  value: string,
+  encodeControls = false,
+): string[] {
   const chunks: string[] = [];
   let chunk = '';
   let escapedChunkBytes = 0;
@@ -62,6 +65,11 @@ function renderSqlStringParts(value: string): string[] {
       continue;
     }
 
+    if (encodeControls && /[\x00-\x1f\x7f]/u.test(character)) {
+      flushChunk();
+      chunks.push(`CHR(${character.charCodeAt(0)})`);
+      continue;
+    }
     if (character === '\r' || character === '\n') {
       flushChunk();
       chunks.push(character === '\r' ? 'CHR(13)' : 'CHR(10)');

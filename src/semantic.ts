@@ -1,3 +1,4 @@
+import { analyzePrograms } from './program-semantics.js';
 /**
  * Semantic analysis checks the meaning and relationships of parsed metadata.
  * The schemas in model.ts check document shape; this module checks whether
@@ -70,6 +71,11 @@ export function analyzeTarget(document: TargetDocument) {
       tablesByKey,
       viewsByKey,
     );
+  const programAnalysis = analyzePrograms(document);
+  diagnostics.push(...programAnalysis.diagnostics);
+  const legacyTables = new Set(expectedTables);
+  for (const key of programAnalysis.reachableTables) expectedTables.add(key);
+  for (const key of programAnalysis.reachableViews) reachableViews.add(key);
   for (const table of document.tables) {
     const key = objectKey(table.reference);
     const tableName = qualifiedName(table.reference);
@@ -80,7 +86,9 @@ export function analyzeTarget(document: TargetDocument) {
         'Table is outside the requested dependency closure.',
       );
     }
-    let expectedRole: TableDefinition['role'] = 'view-dependency';
+    let expectedRole: TableDefinition['role'] = legacyTables.has(key)
+      ? 'view-dependency'
+      : 'program-dependency';
     if (tableTargets.has(key)) {
       expectedRole = 'target';
     } else if (directParents.has(key)) {
@@ -120,6 +128,8 @@ export function analyzeTarget(document: TargetDocument) {
 
     const dependencies = new Set<string>();
     for (const edge of view.dependencies) {
+      if (edge.oracleMaintained && programAnalysis.reachableViews.has(key))
+        continue;
       if (edge.databaseLink) {
         error(
           'REMOTE_VIEW_DEPENDENCY',
@@ -138,7 +148,11 @@ export function analyzeTarget(document: TargetDocument) {
         } else if (edge.type === 'VIEW') {
           dependencies.add(dependency);
         }
-      } else {
+      } else if (
+        programAnalysis.programs
+          .get(objectKey(edge.reference))
+          ?.kind.toUpperCase() !== edge.type
+      ) {
         error(
           'UNSUPPORTED_VIEW_DEPENDENCY',
           viewName,

@@ -1,9 +1,9 @@
 # Oracle schema pipeline — TypeScript
 
 A catalog-driven exporter with a versioned JSON intermediate representation.
-The source database is queried for facts, not for CREATE/ALTER statements.
-No DBMS_METADATA.GET_DDL, DDL string rewriting, source staging tables, or DBMS_OUTPUT
-is used. Within the core pipeline only extraction connects to Oracle. The separate
+The source database is queried for catalog facts and stored-program source text.
+No DBMS_METADATA.GET_DDL, source staging tables, or source procedure calls are used.
+PL/SQL reconstruction qualifies only the declaration identifier; body text is preserved. Within the core pipeline only extraction connects to Oracle. The separate
 `db:clone` orchestrator also provisions and verifies its disposable local destination
 ([ADR 0008](docs/adr/0008-disposable-local-destination-orchestration.md)).
 
@@ -15,7 +15,7 @@ production extraction.
 
 | Command      | Input                          | Output                                     | Oracle connection?                    |
 | ------------ | ------------------------------ | ------------------------------------------ | ------------------------------------- |
-| `extract`    | Explicit table list            | `source.json`                              | Source PDB, read-only catalog queries |
+| `extract`    | Explicit object selection      | `source.json`                              | Source PDB, read-only catalog queries |
 | `transform`  | Source model and target policy | `target.json` and diagnostic/change report | No                                    |
 | `validate`   | Target model                   | Diagnostics; exit 2 for semantic errors    | No                                    |
 | `generate`   | Validated target model         | Ordered SQL script                         | No                                    |
@@ -58,8 +58,10 @@ workbook uses this fixed sheet order:
 5. `Indexes`
 6. `Views`
 7. `View Dependencies`
-8. `Prerequisites`
-9. `Diagnostics`
+8. `Programs`
+9. `Program Dependencies`
+10. `Prerequisites`
+11. `Diagnostics`
 
 | Sheet               | Columns                                                                                                        |
 | ------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -258,7 +260,7 @@ cycles, cross-schema references and composite column order are retained.
 
 ## Intermediate model
 
-Both models have `formatVersion: 5`, a `kind` discriminator, source version/time,
+Both models have `formatVersion: 6`, a `kind` discriminator, source version/time,
 original table and view target lists, table and view definitions, prerequisites and diagnostics. The target
 adds `targetVersion: "23"` and the applied policy. The model is Oracle-aware, not a
 universal database abstraction.
@@ -411,7 +413,7 @@ transformation produces a target and report with blocking diagnostics. Some
 unrepresentable or inaccessible catalog metadata fails extraction itself explicitly.
 
 No application rows, view comments, schema comments, standalone sequences,
-triggers, stored programs, synonyms, jobs, security policies, comments on other
+triggers, unsupported stored-program variants, synonyms, jobs, security policies, comments on other
 object types, original grants, statistics, or full
 physical configuration are exported. System-managed LOB indexes and generated
 hidden columns are not emitted as independent objects. This version reconstructs
@@ -774,7 +776,7 @@ append SQL. Generation emits the retained text once. SQL fragments remain truste
 and opaque: editing a restriction requires keeping text and descriptive facts in
 agreement. The pipeline does not parse arbitrary SQL to verify that agreement.
 
-Both source and target v3/v4 artifacts are rejected with a re-extraction message.
+Both source and target v3/v4/v5 artifacts are rejected with a re-extraction message.
 Re-extract from Oracle and transform again; changing only `formatVersion` cannot
 recover facts omitted by the old exporter. Object-selection version 2 and policy
 version 1 are unchanged. Live restriction coverage is Oracle AI Database Free
@@ -838,3 +840,82 @@ The disposable operational integration suite is opt-in:
 `ORACLE_LOCAL_CLONE_INTEGRATION=1 npm run test:integration`. It uses a temporary
 checkout/config, listener 1529, and refuses pre-existing operational resources.
 It cleans up only the operational resources it creates; CI also tears down the test project.
+
+### Stored procedures and whole packages (format 6)
+
+Selection v3 accepts standalone procedures, public package procedures and whole
+packages. Exact identifier components are separate fields; periods are never split:
+
+```json
+{
+  "version": 3,
+  "procedures": [
+    { "owner": "APP", "name": "PROCESS_ONE" },
+    { "owner": "APP", "package": "ORDER_API", "name": "PROCESS_ORDER" }
+  ],
+  "packages": []
+}
+```
+
+`tables`, `views`, `procedures` and `packages` default to empty arrays; at least one
+root is required. Selecting a package procedure includes every overload and the
+whole specification/body, including private helpers and initialization code.
+Private procedures and public functions are not procedure roots. Standalone
+functions are included as dependencies. Selection v2 and policy v1 remain accepted
+with their original fields. Format-5 documents and retry bundles require fresh
+extraction; changing the version number is not an upgrade.
+
+Program roots follow recorded local TABLE, VIEW, PROCEDURE, FUNCTION and PACKAGE
+dependencies. Both package units contribute edges. Tables reached through programs
+do not expand outgoing foreign keys; explicit table roots retain one-hop FK parents.
+Unrelated legacy roots keep their existing scope. Unsupported local objects require
+provisioning and acknowledgement; remote dependencies block generation.
+Oracle-maintained objects are platform requirements and cannot be export roots.
+
+Source lines, AUTHID, editionability, and supported compiler settings are retained.
+Generation uses ordinary CREATE and a temporary CLOB for large source, checks each
+unit for valid compilation, and restores session compiler settings. Local clone and
+retry recheck included units and generated direct grants. Validation never calls a
+business entry point. Function-based index creation can evaluate application code.
+
+Cross-owner program calls receive direct EXECUTE grants. Cross-owner table/view
+access requires policy v2 with explicit privileges, for example:
+
+```json
+{
+  "version": 2,
+  "plsqlObjectGrants": [
+    {
+      "reference": { "owner": "DATA", "name": "ORDERS" },
+      "grantee": "APP",
+      "privileges": ["SELECT", "UPDATE"]
+    }
+  ]
+}
+```
+
+Allowed privileges are SELECT, INSERT, UPDATE, DELETE and REFERENCES. Grants must
+correspond to included program dependencies. Catalog edges do not identify a minimal
+or sufficient DML privilege set: review the warning and use compilation as the final
+check. No role, system, PUBLIC or grant-option privileges are generated.
+
+Wrapped programs, external-language call specifications, editions-enabled owners,
+conditional compilation, and cycles requiring temporary invalid objects are rejected.
+Self-recursion and mutually calling package bodies can work when their specifications
+form an acyclic compilation graph. Dynamic SQL, invoker-specific runtime references,
+application rows and omitted dependency-table FKs prevent a promise of production
+behavioral equivalence. Source capture is not a transactionally consistent snapshot.
+Source may contain sensitive application literals; source text is kept out of
+telemetry, compiler error messages and workbook cells, but remains in JSON and SQL
+artifacts. Keep those files private.
+
+The Programs and Program Dependencies workbook sheets summarize captured metadata;
+JSON is the complete source artifact. See [ADR 0009](docs/adr/0009-plsql-source-reconstruction.md)
+and the [feature implementation record](docs/features/20-plsql-procedure-and-package-reconstruction.md)
+for validation results and supported scope.
+
+On the pinned Oracle image, stored-program extraction requires explicit
+`--catalog-scope dba` with an authorized reader. `ALL_USERS` does not expose owner
+edition enablement; ALL-scope program requests fail with
+`CATALOG_INCOMPLETE_METADATA` rather than assuming editions are disabled or
+silently using DBA views. Table/view-only ALL extraction is unchanged.

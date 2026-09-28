@@ -1,3 +1,5 @@
+import { prepareProgramOperations } from './program-prepare.js';
+import { sqlPreamble } from './sql-preamble.js';
 /**
  * Coordinates SQL preparation from parsed target metadata and semantic analysis.
  * Orders the reconstruction phases, sorts objects deterministically, and places
@@ -49,12 +51,7 @@ function orderedConstraints(table: TableDefinition) {
 function emitPreamble(document: TargetDocument, { emit }: SqlCollector): void {
   emit(
     'document',
-    `-- Generated from oracle-schema-pipeline format ${document.formatVersion}. No source DDL was replayed.`,
-    'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
-    'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
-    'SET DEFINE OFF',
-    'SET SQLBLANKLINES ON',
-    'SET ECHO ON',
+    ...sqlPreamble,
     'ALTER SESSION SET DEFERRED_SEGMENT_CREATION=TRUE;',
   );
 }
@@ -241,6 +238,11 @@ export function prepareSql(
 
   emitPreamble(document, collector);
   emitSchemas(document, collector);
+  if (document.programs.length) {
+    prepareProgramOperations(document, collector);
+    collector.emit('document', 'PROMPT Schema reconstruction completed.');
+    return collector.result;
+  }
   emitTables(tables, document.policy, collector);
   emitComments(tables, collector);
   for (const grant of indexRequirements(document).grants) {

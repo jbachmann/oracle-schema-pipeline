@@ -16,16 +16,43 @@ export const objectReferenceSchema = z
   .strict();
 export type ObjectReference = z.infer<typeof objectReferenceSchema>;
 
-export const selectionSchema = z
+export const procedureSelectionSchema = objectReferenceSchema
+  .extend({
+    package: identifierSchema.optional(),
+  })
+  .strict();
+export type ProcedureSelection = z.infer<typeof procedureSelectionSchema>;
+
+const legacySelectionSchema = z
   .object({
     version: z.literal(2),
     tables: z.array(objectReferenceSchema).default([]),
     views: z.array(objectReferenceSchema).default([]),
   })
-  .strict()
+  .strict();
+const programSelectionSchema = z
+  .object({
+    version: z.literal(3),
+    tables: z.array(objectReferenceSchema).default([]),
+    views: z.array(objectReferenceSchema).default([]),
+    procedures: z.array(procedureSelectionSchema).default([]),
+    packages: z.array(objectReferenceSchema).default([]),
+  })
+  .strict();
+export const selectionSchema = z
+  .discriminatedUnion('version', [
+    legacySelectionSchema,
+    programSelectionSchema,
+  ])
   .refine(
-    (value) => value.tables.length + value.views.length > 0,
-    'At least one table or view is required.',
+    (value) =>
+      value.tables.length +
+        value.views.length +
+        (value.version === 3
+          ? value.procedures.length + value.packages.length
+          : 0) >
+      0,
+    'At least one object is required.',
   );
 export type ObjectSelection = z.infer<typeof selectionSchema>;
 
@@ -157,6 +184,7 @@ export const viewDependencySchema = z
     reference: objectReferenceSchema,
     type: z.string(),
     databaseLink: z.string().nullable(),
+    oracleMaintained: z.boolean().optional(),
   })
   .strict();
 export type ViewDependency = z.infer<typeof viewDependencySchema>;
@@ -180,7 +208,12 @@ export type IndexDefinition = z.infer<typeof indexSchema>;
 export const tableSchema = z
   .object({
     reference: objectReferenceSchema,
-    role: z.enum(['target', 'direct-parent', 'view-dependency']),
+    role: z.enum([
+      'target',
+      'direct-parent',
+      'view-dependency',
+      'program-dependency',
+    ]),
     comment: z.string().nullable(),
     // Features cannot be silently discarded. Nonempty entries block generation.
     unsupportedFeatures: z.array(z.string()),
@@ -222,23 +255,98 @@ export type ViewDefinition = z.infer<typeof viewSchema>;
 export const prerequisiteSchema = z
   .object({
     requiredBy: objectReferenceSchema,
+    origin: z.enum(['TABLE', 'INDEX']).optional(),
     reference: objectReferenceSchema,
     type: z.string(),
     databaseLink: z.string().nullable(),
+    oracleMaintained: z.boolean().optional(),
   })
   .strict();
 export type Prerequisite = z.infer<typeof prerequisiteSchema>;
 
+export const programSettingsSchema = z
+  .object({
+    plsqlOptimizeLevel: z.number().int().min(0).max(3),
+    plsqlCodeType: z.enum(['INTERPRETED', 'NATIVE']),
+    plsqlDebug: z.boolean(),
+    plsqlWarnings: z.string(),
+    nlsLengthSemantics: z.enum(['BYTE', 'CHAR']),
+    plsqlCcflags: z.string().nullable(),
+    plscopeSettings: z.string(),
+  })
+  .strict();
+export const programUnitSchema = z
+  .object({
+    type: z.enum(['PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY']),
+    status: z.enum(['VALID', 'INVALID']),
+    sourceLines: z
+      .array(
+        z
+          .object({
+            line: z.number().int().positive(),
+            text: z.string(),
+          })
+          .strict(),
+      )
+      .min(1),
+    dependencies: z.array(
+      viewDependencySchema
+        .extend({
+          type: z.string().min(1),
+          oracleMaintained: z.boolean(),
+        })
+        .strict(),
+    ),
+    settings: programSettingsSchema,
+  })
+  .strict();
+export type ProgramUnit = z.infer<typeof programUnitSchema>;
+export type ProgramSettings = z.infer<typeof programSettingsSchema>;
+const programProperties = {
+  reference: objectReferenceSchema,
+  role: z.enum(['target', 'dependency']),
+  authid: z.enum(['DEFINER', 'CURRENT_USER']),
+  editionable: z.boolean(),
+  sourceOwnerEditionsEnabled: z.boolean(),
+  oracleMaintained: z.boolean(),
+  unsupportedFeatures: z.array(z.string()),
+  units: z.array(programUnitSchema).min(1),
+};
+export const programSchema = z.discriminatedUnion('kind', [
+  z.object({ ...programProperties, kind: z.literal('procedure') }).strict(),
+  z.object({ ...programProperties, kind: z.literal('function') }).strict(),
+  z
+    .object({
+      ...programProperties,
+      kind: z.literal('package'),
+      publicProcedures: z.array(
+        z
+          .object({
+            name: identifierSchema,
+            overload: z.string().nullable(),
+          })
+          .strict(),
+      ),
+      bodyRequired: z.boolean(),
+    })
+    .strict(),
+]);
+export type ProgramDefinition = z.infer<typeof programSchema>;
+
 const commonDocumentProperties = {
-  formatVersion: z.literal(5, {
+  formatVersion: z.literal(6, {
     errorMap: () => ({
       message:
-        'Expected format v5; re-extract older artifacts with this version of the pipeline.',
+        'Expected format v6; re-extract older artifacts with this version of the pipeline.',
     }),
   }),
   dialect: z.literal('oracle'),
   sourceVersion: z.string(),
   extractedAt: z.string().datetime(),
+  selectionVersion: z.union([z.literal(2), z.literal(3)]),
+  targetProcedures: z.array(procedureSelectionSchema),
+  targetPackages: z.array(objectReferenceSchema),
+  programs: z.array(programSchema),
   targetTables: z.array(objectReferenceSchema),
   targetViews: z.array(objectReferenceSchema),
   tables: z.array(tableSchema),
@@ -252,23 +360,57 @@ export const sourceDocumentSchema = z
   .strict();
 export type SourceDocument = z.infer<typeof sourceDocumentSchema>;
 
-export const policySchema = z
+const policyProperties = {
+  createSchemas: z.boolean().default(true),
+  defaultTablespace: identifierSchema.default('USERS'),
+  maxStringSize: z.enum(['STANDARD', 'EXTENDED']).default('STANDARD'),
+  externalPrerequisites: z
+    .array(
+      z
+        .object({
+          reference: objectReferenceSchema,
+          type: z.string(),
+        })
+        .strict(),
+    )
+    .default([]),
+};
+export const plsqlObjectGrantSchema = z
   .object({
-    version: z.literal(1).default(1),
-    createSchemas: z.boolean().default(true),
-    defaultTablespace: identifierSchema.default('USERS'),
-    maxStringSize: z.enum(['STANDARD', 'EXTENDED']).default('STANDARD'),
-    // Declare provisioned external objects and their existing prerequisite setup.
-    // Required index-owner EXECUTE grants are derived and emitted separately.
-    externalPrerequisites: z
-      .array(
-        z
-          .object({ reference: objectReferenceSchema, type: z.string() })
-          .strict(),
-      )
-      .default([]),
+    reference: objectReferenceSchema,
+    grantee: identifierSchema,
+    privileges: z
+      .array(z.enum(['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'REFERENCES']))
+      .min(1)
+      .refine(
+        (values) => new Set(values).size === values.length,
+        'Duplicate privilege.',
+      ),
   })
   .strict();
+export type PlsqlObjectGrant = z.infer<typeof plsqlObjectGrantSchema>;
+export const policySchema = z.preprocess(
+  (value) => {
+    if (
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      !('version' in value)
+    )
+      return { ...value, version: 1 };
+    return value;
+  },
+  z.discriminatedUnion('version', [
+    z.object({ version: z.literal(1), ...policyProperties }).strict(),
+    z
+      .object({
+        version: z.literal(2),
+        ...policyProperties,
+        plsqlObjectGrants: z.array(plsqlObjectGrantSchema).default([]),
+      })
+      .strict(),
+  ]),
+);
 export type TargetPolicy = z.infer<typeof policySchema>;
 
 export const targetDocumentSchema = z
