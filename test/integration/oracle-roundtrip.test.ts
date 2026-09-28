@@ -26,7 +26,7 @@ import {
 } from '../../src/model.js';
 
 import { comparableExpression as normalizeExpression } from '../helpers/sql-comparison.js';
-const schemas = ['IAM', 'CATALOG', 'COMMERCE', 'FINANCE'];
+const schemas = ['IAM', 'CATALOG', 'COMMERCE', 'FINANCE', 'INDEX_SCHEMA'];
 const selectedViews = [
   { owner: 'FINANCE', name: 'OPEN_ORDER_FINANCE' },
   { owner: 'CATALOG', name: 'Product Availability' },

@@ -19,6 +19,7 @@ export type QueryCategory =
   | 'column-comments'
   | 'indexes'
   | 'index-expressions'
+  | 'index-dependencies'
   | 'index-columns'
   | 'view'
   | 'view-columns'

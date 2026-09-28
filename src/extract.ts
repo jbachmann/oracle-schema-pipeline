@@ -103,7 +103,7 @@ async function extract(
   // Check the assembled document's shape at the stage boundary. Semantic checks
   // against target policy belong to downstream validation.
   return sourceDocumentSchema.parse({
-    formatVersion: 4,
+    formatVersion: 5,
     kind: 'source',
     dialect: 'oracle',
     sourceVersion: await catalog.databaseVersion(),

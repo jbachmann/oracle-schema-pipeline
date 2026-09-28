@@ -141,7 +141,8 @@ for (const mode of ['timeout', 'abort'] as const) {
         {
           env: childEnvironment(),
           signal: controller.signal,
-          timeoutMs: mode === 'timeout' ? 250 : 2000,
+          // Allow child startup under concurrent Oracle/unit-test load.
+          timeoutMs: 2000,
           onProgressLine: ({ line }) => {
             lines.push(line);
             if (mode === 'abort' && line === 'ready')

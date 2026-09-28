@@ -6,6 +6,7 @@
  * policy. The transformation report combines recorded changes with validation
  * results so callers can review issues before SQL generation.
  */
+import { indexRequirements, renderIndexGrant } from './index-grants.js';
 import {
   targetDocumentSchema,
   objectKey,
@@ -29,7 +30,7 @@ export function transformSource(
     transformTable(table, targetKeys.has(objectKey(table.reference))),
   );
   // Return a reviewable target even when semantic errors block SQL generation.
-  return targetDocumentSchema.parse({
+  const target = targetDocumentSchema.parse({
     ...source,
     kind: 'target',
     targetVersion: '23',
@@ -40,6 +41,15 @@ export function transformSource(
       ...results.flatMap((result) => result.changes),
     ],
   });
+  target.diagnostics.push(
+    ...indexRequirements(target).grants.map((grant): Diagnostic => ({
+      severity: 'change',
+      code: 'INDEX_REQUIRED_GRANT',
+      object: qualifiedName(grant.reference),
+      message: renderIndexGrant(grant),
+    })),
+  );
+  return target;
 }
 
 export function transformationReport(target: TargetDocument): Diagnostic[] {

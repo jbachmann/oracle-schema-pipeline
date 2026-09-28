@@ -1,3 +1,4 @@
+import { indexRequirements } from './index-grants.js';
 import { analyzeTarget } from './semantic.js';
 import { prepareSql } from './prepare.js';
 import {
@@ -46,6 +47,7 @@ function validateParsedTarget(document: TargetDocument) {
       error,
     );
   }
+  diagnostics.push(...indexRequirements(document).diagnostics);
   validatePrerequisites(document, error);
   const preparation = prepareSql(document, analysis);
   diagnostics.push(...preparation.diagnostics);
@@ -152,13 +154,6 @@ function validateIndexes(
       );
     }
     indexNames.add(identity);
-    if (index.reference.owner !== table.reference.owner) {
-      error(
-        'CROSS_OWNER_INDEX',
-        indexName,
-        'Cross-owner index recreation needs a dedicated policy.',
-      );
-    }
     if (
       ![
         'NORMAL',

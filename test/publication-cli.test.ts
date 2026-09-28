@@ -161,7 +161,7 @@ for (const label of ['source', 'policy'] as const) {
           contents = JSON.stringify(document);
           expectedIssue =
             label === 'source'
-              ? /formatVersion: Expected format v4; re-extract older artifacts/
+              ? /formatVersion: Expected format v5; re-extract older artifacts/
               : /version: Invalid literal value/;
         }
         const path = `${label}.json`;

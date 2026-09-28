@@ -59,6 +59,7 @@ export function ordinaryTable(owner: string, name: string): TableDefinition {
       {
         reference: { owner, name: `PK_${name}` },
         type: 'NORMAL',
+        dependencies: [],
         unique: true,
         visible: true,
         status: 'VALID',
@@ -100,7 +101,7 @@ export function sourceFixture(): SourceDocument {
     fk('FK_PARENT_GRANDPARENT', { owner: 'OTHER', name: 'GRANDPARENT' }),
   );
   return sourceDocumentSchema.parse({
-    formatVersion: 4,
+    formatVersion: 5,
     kind: 'source',
     dialect: 'oracle',
     sourceVersion: '19.0.0.0.0',

@@ -1,7 +1,7 @@
 import { testComposeArgs, rejectDsnOverrides } from './compose.js';
 import { spawn } from 'node:child_process';
 
-const schemas = ['FINANCE', 'COMMERCE', 'CATALOG', 'IAM'];
+const schemas = ['FINANCE', 'COMMERCE', 'CATALOG', 'IAM', 'INDEX_SCHEMA'];
 
 async function command(
   file: string,
@@ -52,7 +52,7 @@ DECLARE
   remaining NUMBER;
 BEGIN
   SELECT COUNT(*) INTO remaining FROM dba_users
-   WHERE username IN ('IAM', 'CATALOG', 'COMMERCE', 'FINANCE');
+   WHERE username IN ('INDEX_SCHEMA', 'IAM', 'CATALOG', 'COMMERCE', 'FINANCE');
   IF remaining != 0 THEN
     RAISE_APPLICATION_ERROR(-20001, 'Managed destination schemas remain: ' || remaining);
   END IF;

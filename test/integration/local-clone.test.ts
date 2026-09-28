@@ -137,7 +137,7 @@ test(
       ],
       {
         env: childEnvironment(),
-        input: `WHENEVER SQLERROR EXIT 1\nALTER SESSION SET CONTAINER=FREEPDB1;\nCREATE USER CLONE_FIXTURE NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE TABLE CLONE_FIXTURE.T (ID NUMBER PRIMARY KEY, LABEL VARCHAR2(40));\nCOMMENT ON TABLE CLONE_FIXTURE.T IS 'clone table';\nCOMMENT ON COLUMN CLONE_FIXTURE.T.LABEL IS 'clone label';\nINSERT INTO CLONE_FIXTURE.T VALUES (1, 'source row');\nCREATE VIEW CLONE_FIXTURE.V AS SELECT ID, LABEL FROM CLONE_FIXTURE.T;\nCREATE SEQUENCE CLONE_FIXTURE.EXTERNAL_SEQ;\nCREATE TABLE CLONE_FIXTURE.WITH_DEFAULT (ID NUMBER DEFAULT CLONE_FIXTURE.EXTERNAL_SEQ.NEXTVAL);\nCOMMIT;\nEXIT\n`,
+        input: `WHENEVER SQLERROR EXIT 1\nALTER SESSION SET CONTAINER=FREEPDB1;\nCREATE USER CLONE_FIXTURE NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE USER CLONE_INDEX NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE TABLE CLONE_FIXTURE.T (ID NUMBER, LABEL VARCHAR2(40));\nCREATE UNIQUE INDEX CLONE_INDEX.T_PK ON CLONE_FIXTURE.T(ID);\nALTER TABLE CLONE_FIXTURE.T ADD CONSTRAINT T_PK PRIMARY KEY(ID) USING INDEX CLONE_INDEX.T_PK;\nCOMMENT ON TABLE CLONE_FIXTURE.T IS 'clone table';\nCOMMENT ON COLUMN CLONE_FIXTURE.T.LABEL IS 'clone label';\nINSERT INTO CLONE_FIXTURE.T VALUES (1, 'source row');\nCREATE VIEW CLONE_FIXTURE.V AS SELECT ID, LABEL FROM CLONE_FIXTURE.T;\nCREATE SEQUENCE CLONE_FIXTURE.EXTERNAL_SEQ;\nCREATE TABLE CLONE_FIXTURE.WITH_DEFAULT (ID NUMBER DEFAULT CLONE_FIXTURE.EXTERNAL_SEQ.NEXTVAL);\nCREATE INDEX CLONE_INDEX.DEFAULT_IX ON CLONE_FIXTURE.WITH_DEFAULT(ID);\nCOMMIT;\nEXIT\n`,
       },
     );
     const selection = {
@@ -206,6 +206,16 @@ test(
         JSON.parse(
           await readFile(join(first.directory, 'target.json'), 'utf8'),
         ),
+      );
+      assert.equal(target.tables[0].indexes[0].reference.owner, 'CLONE_INDEX');
+      const wrongAssociation = structuredClone(target);
+      const key = wrongAssociation.tables[0].constraints.find(
+        (item) => item.kind === 'primary-key',
+      )!;
+      if (key.kind === 'primary-key')
+        key.backingIndex = { owner: 'CLONE_FIXTURE', name: 'T_PK' };
+      await assert.rejects(
+        destination.sql(verificationChecks(wrongAssociation)),
       );
       await assert.rejects(
         destination.sql(
@@ -354,6 +364,12 @@ test(
         join(root, 'config/local/setup.sql'),
         'CREATE USER CLONE_FIXTURE NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE SEQUENCE CLONE_FIXTURE.EXTERNAL_SEQ;',
       );
+      const missingIndexOwner = await cloneDatabase({ root });
+      assert.equal(missingIndexOwner.result.status, 'failed');
+      await writeFile(
+        join(root, 'config/local/setup.sql'),
+        'CREATE USER CLONE_FIXTURE NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE USER CLONE_INDEX NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE SEQUENCE CLONE_FIXTURE.EXTERNAL_SEQ;',
+      );
       const prerequisite = await cloneDatabase({ root });
       assert.equal(
         prerequisite.result.status,
@@ -388,7 +404,7 @@ test(
         {
           env: childEnvironment(),
           input:
-            'ALTER SESSION SET CONTAINER=FREEPDB1;\nDROP USER CLONE_FIXTURE CASCADE;\nEXIT\n',
+            'ALTER SESSION SET CONTAINER=FREEPDB1;\nDROP USER CLONE_FIXTURE CASCADE;\nDROP USER CLONE_INDEX CASCADE;\nEXIT\n',
         },
       );
     }

@@ -1,3 +1,5 @@
+import { schemaOwners } from '../src/schema-owners.js';
+import { indexRequirements } from '../src/index-grants.js';
 import { join } from 'node:path';
 import { PreflightProgress, type PreflightObserver } from './clone-progress.js';
 import type { CommandOptions } from './process.js';
@@ -23,7 +25,7 @@ export function assertLocalEndpoint(endpoint: string): void {
 export function generatedReplay(sql: string): string {
   const prefix =
     [
-      '-- Generated from oracle-schema-pipeline format 4. No source DDL was replayed.',
+      '-- Generated from oracle-schema-pipeline format 5. No source DDL was replayed.',
       'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
       'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
       'SET DEFINE OFF',
@@ -41,13 +43,7 @@ function countCheck(from: string, expected: number): string {
   return `DECLARE n NUMBER; BEGIN SELECT COUNT(*) INTO n FROM ${from}; IF n != ${expected} THEN RAISE_APPLICATION_ERROR(-20001, 'Clone condition failed'); END IF; END;\n/\n`;
 }
 export function setupChecks(target: TargetDocument): string {
-  const owners = [
-    ...new Set(
-      [...target.tables, ...target.views].map(
-        (object) => object.reference.owner,
-      ),
-    ),
-  ];
+  const owners = schemaOwners(target);
   return (
     countCheck(
       `dba_tablespaces WHERE tablespace_name=${literal(target.policy.defaultTablespace)} AND status='ONLINE'`,
@@ -76,20 +72,54 @@ export function setupChecks(target: TargetDocument): string {
   );
 }
 export function verificationChecks(target: TargetDocument): string {
-  return [
-    ...target.tables.map((object) => ({ ...object.reference, type: 'TABLE' })),
-    ...target.views.map((object) => ({ ...object.reference, type: 'VIEW' })),
-    ...target.tables.flatMap((table) =>
-      table.indexes.map((index) => ({ ...index.reference, type: 'INDEX' })),
-    ),
-  ]
-    .map((object) =>
-      countCheck(
-        `dba_objects WHERE owner=${literal(object.owner)} AND object_name=${literal(object.name)} AND object_type=${literal(object.type)} AND status='VALID'`,
-        1,
+  return (
+    [
+      ...target.tables.map((object) => ({
+        ...object.reference,
+        type: 'TABLE',
+      })),
+      ...target.views.map((object) => ({ ...object.reference, type: 'VIEW' })),
+      ...target.tables.flatMap((table) =>
+        table.indexes.map((index) => ({ ...index.reference, type: 'INDEX' })),
       ),
-    )
-    .join('');
+    ]
+      .map((object) =>
+        countCheck(
+          `dba_objects WHERE owner=${literal(object.owner)} AND object_name=${literal(object.name)} AND object_type=${literal(object.type)} AND status='VALID'`,
+          1,
+        ),
+      )
+      .join('') +
+    target.tables
+      .flatMap((table) => [
+        ...table.indexes.map((index) =>
+          countCheck(
+            `dba_indexes WHERE owner=${literal(index.reference.owner)} AND index_name=${literal(index.reference.name)} AND table_owner=${literal(table.reference.owner)} AND table_name=${literal(table.reference.name)} AND status='VALID'`,
+            1,
+          ),
+        ),
+        ...table.constraints.flatMap((constraint) =>
+          (constraint.kind === 'primary-key' || constraint.kind === 'unique') &&
+          constraint.backingIndex
+            ? [
+                countCheck(
+                  `dba_constraints WHERE owner=${literal(table.reference.owner)} AND table_name=${literal(table.reference.name)} AND constraint_name=${literal(constraint.name)} AND index_owner=${literal(constraint.backingIndex.owner)} AND index_name=${literal(constraint.backingIndex.name)}`,
+                  1,
+                ),
+              ]
+            : [],
+        ),
+      ])
+      .join('') +
+    indexRequirements(target)
+      .grants.map((grant) =>
+        countCheck(
+          `dual WHERE EXISTS (SELECT 1 FROM dba_tab_privs WHERE owner=${literal(grant.reference.owner)} AND table_name=${literal(grant.reference.name)} AND grantee=${literal(grant.grantee)} AND privilege=${literal(grant.privilege)})`,
+          1,
+        ),
+      )
+      .join('')
+  );
 }
 export interface Destination {
   preflight(observer?: PreflightObserver): Promise<string>;

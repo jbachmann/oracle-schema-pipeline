@@ -320,6 +320,7 @@ test('function indexes and virtual columns keep their expressions', () => {
   table.indexes.push({
     ...structuredClone(table.indexes[0]),
     reference: { owner: 'APP', name: 'IX_EXPRESSION' },
+    dependencies: [],
     unique: false,
     type: 'FUNCTION-BASED NORMAL',
     keys: [{ column: null, expression: 'ABS("ID")', direction: 'ASC' }],
@@ -762,6 +763,7 @@ test('preflight names views, indexes and constraints and retains other semantic 
     ...structuredClone(table.indexes[0]),
     reference: { owner: 'APP', name: 'LONG_INDEX' },
     type: 'FUNCTION-BASED NORMAL',
+    dependencies: [],
     unique: false,
     keys: [
       { column: null, expression: `'${'x'.repeat(2400)}'`, direction: 'ASC' },

@@ -23,6 +23,7 @@ import {
   singleRow,
 } from './catalog-decoding.js';
 import {
+  dependencyRowSchema,
   tableRowSchema,
   columnRowSchema,
   commentRowSchema,
@@ -335,6 +336,14 @@ async function readIndexes(
     }
     definitions.push({
       reference: { owner: index.OWNER, name: index.INDEX_NAME },
+      dependencies: await readIndexDependencies(
+        reader,
+        {
+          owner: index.OWNER,
+          name: index.INDEX_NAME,
+        },
+        table,
+      ),
       type: index.INDEX_TYPE,
       unique: index.UNIQUENESS === 'UNIQUE',
       visible: index.VISIBILITY === 'VISIBLE',
@@ -351,4 +360,50 @@ async function readIndexes(
     });
   }
   return definitions;
+}
+
+async function readIndexDependencies(
+  reader: CatalogReader,
+  reference: ObjectReference,
+  table: ObjectReference,
+): Promise<IndexDefinition['dependencies']> {
+  const rows = await reader.rows(
+    'index-dependencies',
+    dependencyRowSchema,
+    `SELECT DISTINCT d.referenced_owner, d.referenced_name, d.referenced_type, d.referenced_link_name
+       FROM ${reader.catalogView('dependencies')} d
+      WHERE d.owner=:owner AND d.name=:indexName AND d.type='INDEX'
+        AND (d.referenced_link_name IS NOT NULL OR
+          ((d.referenced_owner IS NULL OR NOT (d.referenced_type='TABLE' AND d.referenced_owner=:tableOwner AND d.referenced_name=:tableName)) AND NOT EXISTS (
+            SELECT 1 FROM ${reader.catalogView('users')} u
+             WHERE u.username=d.referenced_owner AND u.oracle_maintained='Y')))
+      ORDER BY d.referenced_owner, d.referenced_name, d.referenced_type, d.referenced_link_name`,
+    {
+      owner: reference.owner,
+      indexName: reference.name,
+      tableOwner: table.owner,
+      tableName: table.name,
+    },
+  );
+  const dependencies = rows.map((row) => {
+    if (row.REFERENCED_OWNER === null) {
+      catalogFailure(
+        'CATALOG_INCOMPLETE_METADATA',
+        qualifiedName(reference),
+        'REFERENCED_OWNER',
+      );
+    }
+    return {
+      reference: { owner: row.REFERENCED_OWNER!, name: row.REFERENCED_NAME },
+      type: row.REFERENCED_TYPE,
+      databaseLink: row.REFERENCED_LINK_NAME,
+    };
+  });
+  return [
+    ...new Map(
+      dependencies.map((edge) => [JSON.stringify(edge), edge]),
+    ).entries(),
+  ]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([, edge]) => edge);
 }

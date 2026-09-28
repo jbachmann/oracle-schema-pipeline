@@ -1,5 +1,5 @@
 {
-  "formatVersion": 4,
+  "formatVersion": 5,
   "dialect": "oracle",
   "sourceVersion": "19.0.0.0.0",
   "extractedAt": "2026-09-22T00:00:00.000Z",
@@ -17,7 +17,7 @@
         "name": "CHILD"
       },
       "role": "target",
-      "comment": "Synthetic child table's comment & Ω",
+      "comment": "Synthetic child table's comment & \u03a9",
       "unsupportedFeatures": [],
       "sourcePhysical": {
         "tablespace": "PROD_DATA",
@@ -79,7 +79,10 @@
             "rely": false
           },
           "kind": "primary-key",
-          "columns": ["TENANT_ID", "ID"],
+          "columns": [
+            "TENANT_ID",
+            "ID"
+          ],
           "backingIndex": {
             "owner": "APP",
             "name": "PK_CHILD"
@@ -140,7 +143,8 @@
               "expression": null,
               "direction": "ASC"
             }
-          ]
+          ],
+          "dependencies": []
         }
       ]
     },
@@ -212,7 +216,10 @@
             "rely": false
           },
           "kind": "primary-key",
-          "columns": ["TENANT_ID", "ID"],
+          "columns": [
+            "TENANT_ID",
+            "ID"
+          ],
           "backingIndex": {
             "owner": "SHARED",
             "name": "PK_PARENT"
@@ -242,7 +249,8 @@
               "expression": null,
               "direction": "ASC"
             }
-          ]
+          ],
+          "dependencies": []
         }
       ]
     }

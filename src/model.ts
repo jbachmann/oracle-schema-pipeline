@@ -152,6 +152,15 @@ const indexKeySchema = z
   })
   .strict();
 
+export const viewDependencySchema = z
+  .object({
+    reference: objectReferenceSchema,
+    type: z.string(),
+    databaseLink: z.string().nullable(),
+  })
+  .strict();
+export type ViewDependency = z.infer<typeof viewDependencySchema>;
+
 export const indexSchema = z
   .object({
     reference: objectReferenceSchema,
@@ -163,6 +172,7 @@ export const indexSchema = z
     // Compression is a recorded source fact, explicitly omitted by target policy.
     compression: z.string(),
     keys: z.array(indexKeySchema).min(1),
+    dependencies: z.array(viewDependencySchema),
   })
   .strict();
 export type IndexDefinition = z.infer<typeof indexSchema>;
@@ -186,15 +196,6 @@ export const tableSchema = z
   })
   .strict();
 export type TableDefinition = z.infer<typeof tableSchema>;
-
-export const viewDependencySchema = z
-  .object({
-    reference: objectReferenceSchema,
-    type: z.string(),
-    databaseLink: z.string().nullable(),
-  })
-  .strict();
-export type ViewDependency = z.infer<typeof viewDependencySchema>;
 
 export const viewSchema = z
   .object({
@@ -229,10 +230,10 @@ export const prerequisiteSchema = z
 export type Prerequisite = z.infer<typeof prerequisiteSchema>;
 
 const commonDocumentProperties = {
-  formatVersion: z.literal(4, {
+  formatVersion: z.literal(5, {
     errorMap: () => ({
       message:
-        'Expected format v4; re-extract older artifacts with this version of the pipeline.',
+        'Expected format v5; re-extract older artifacts with this version of the pipeline.',
     }),
   }),
   dialect: z.literal('oracle'),
@@ -257,7 +258,8 @@ export const policySchema = z
     createSchemas: z.boolean().default(true),
     defaultTablespace: identifierSchema.default('USERS'),
     maxStringSize: z.enum(['STANDARD', 'EXTENDED']).default('STANDARD'),
-    // These are explicit declarations that prerequisite objects/grants already exist.
+    // Declare provisioned external objects and their existing prerequisite setup.
+    // Required index-owner EXECUTE grants are derived and emitted separately.
     externalPrerequisites: z
       .array(
         z

@@ -1,14 +1,16 @@
 /**
  * Coordinates SQL preparation from parsed target metadata and semantic analysis.
  * Orders the reconstruction phases, sorts objects deterministically, and places
- * deduplicated grants before the foreign keys and views that need them. Object
- * rendering lives in ddl.ts; sql-preparation.ts collects SQL and diagnostics.
+ * deduplicated grants before the indexes, foreign keys, and views that need them.
+ * Object rendering lives in ddl.ts; sql-preparation.ts collects SQL and diagnostics.
  *
  * validate.ts runs preparation to find rendering errors alongside metadata
  * errors. Once validation succeeds, generate.ts joins the prepared operations
  * into the output script. Preparation is entirely offline and never executes
  * SQL or authorizes publication on its own.
  */
+import { schemaOwners } from './schema-owners.js';
+import { indexRequirements, renderIndexGrant } from './index-grants.js';
 import { compareOrdinal, type analyzeTarget } from './semantic.js';
 import { renderComment } from './comments.js';
 import {
@@ -61,12 +63,8 @@ function emitSchemas(document: TargetDocument, { emit }: SqlCollector): void {
   if (!document.policy.createSchemas) {
     return;
   }
-  const owners = new Set([
-    ...document.tables.map((table) => table.reference.owner),
-    ...document.views.map((view) => view.reference.owner),
-  ]);
   const tablespace = quoteIdentifier(document.policy.defaultTablespace);
-  for (const owner of [...owners].sort()) {
+  for (const owner of schemaOwners(document)) {
     emit(
       quoteIdentifier(owner),
       `CREATE USER ${quoteIdentifier(owner)} NO AUTHENTICATION DEFAULT TABLESPACE ${tablespace} QUOTA UNLIMITED ON ${tablespace};`,
@@ -241,6 +239,9 @@ export function prepareSql(
   emitSchemas(document, collector);
   emitTables(tables, document.policy, collector);
   emitComments(tables, collector);
+  for (const grant of indexRequirements(document).grants) {
+    collector.emit(qualifiedName(grant.reference), renderIndexGrant(grant));
+  }
   emitIndexes(tables, collector);
   emitLocalConstraints(tables, collector);
   emitReferenceGrants(tables, collector);

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import oracle from 'oracledb';
 import { verifyCompletion } from '../../src/completion.js';
 
-const schemas = ['IAM', 'CATALOG', 'COMMERCE', 'FINANCE'];
+const schemas = ['IAM', 'CATALOG', 'COMMERCE', 'FINANCE', 'INDEX_SCHEMA'];
 const selectedViews = [
   { owner: 'FINANCE', name: 'OPEN_ORDER_FINANCE' },
   { owner: 'CATALOG', name: 'Product Availability' },

@@ -240,7 +240,7 @@ cycles, cross-schema references and composite column order are retained.
 
 ## Intermediate model
 
-Both models have `formatVersion: 4`, a `kind` discriminator, source version/time,
+Both models have `formatVersion: 5`, a `kind` discriminator, source version/time,
 original table and view target lists, table and view definitions, prerequisites and diagnostics. The target
 adds `targetVersion: "23"` and the applied policy. The model is Oracle-aware, not a
 universal database abstraction.
@@ -655,6 +655,36 @@ reports expose these diagnostics and generation independently revalidates input.
 No model repair or SQL-expression parsing is performed. See
 [ADR 0003](docs/adr/0003-authoritative-view-validation.md).
 
+### Cross-owner indexes and format v5
+
+Supported indexes retain their exact owner and name, including indexes backing
+primary-key and unique constraints and indexes on included one-hop parents.
+Index-only schemas join table and view owners in automatic schema creation and
+receive the configured default tablespace and quota. With `createSchemas=false`,
+provision every owner and its quota in advance. Index ownership does not expand
+table selection into that owner's schema.
+
+Format v5 requires a `dependencies` array on every index. Re-extract format-4
+artifacts; table-level prerequisites cannot identify the correct grant recipient.
+Selection version 2 and policy version 1 remain unchanged.
+
+For exact local FUNCTION or PACKAGE dependencies of function-based indexes,
+generation emits deduplicated `GRANT EXECUTE` statements to the index owner before
+creating indexes. Transformation reports these as `INDEX_REQUIRED_GRANT` changes;
+local clone verifies the direct grants and table/backing-index associations.
+Built-in functions and ordinary cross-owner indexes need no additional object
+grants. Synonyms, remote edges, and unsupported dependency types fail closed with
+`UNSUPPORTED_INDEX_DEPENDENCY`.
+
+External functions/packages must already exist and be acknowledged in
+`externalPrerequisites`, using `createSchemas=false` as with other prerequisites.
+The replay account must have authority to create objects in other schemas and
+issue the required object grants (including `CREATE ANY INDEX` for cross-schema
+index creation). Generated grants do not grant administrative privileges or copy
+source security policy. Offline validation cannot verify destination privileges.
+Missing owners, insufficient quota, or denied grants stop replay; failed grants
+are never skipped or retried with broader privileges.
+
 ### Strict catalog decoding and format v4
 
 Extraction validates driver rows before assembling objects. Unknown enum flags,
@@ -673,7 +703,7 @@ append SQL. Generation emits the retained text once. SQL fragments remain truste
 and opaque: editing a restriction requires keeping text and descriptive facts in
 agreement. The pipeline does not parse arbitrary SQL to verify that agreement.
 
-Both source and target v3 artifacts are rejected with a re-extraction message.
+Both source and target v3/v4 artifacts are rejected with a re-extraction message.
 Re-extract from Oracle and transform again; changing only `formatVersion` cannot
 recover facts omitted by the old exporter. Object-selection version 2 and policy
 version 1 are unchanged. Live restriction coverage is Oracle AI Database Free

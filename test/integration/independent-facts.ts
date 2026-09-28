@@ -23,6 +23,36 @@ export async function assertIndependentFacts(
     ).rows;
   try {
     assert.deepEqual(
+      await rows(`SELECT index_name, table_owner, table_name FROM dba_indexes
+      WHERE owner='INDEX_SCHEMA' ORDER BY index_name`),
+      [
+        ['PERMISSION_KEY_IX', 'IAM', 'PERMISSIONS'],
+        ['PERMISSION_LOOKUP_IX', 'IAM', 'PERMISSIONS'],
+        ['PERMISSION_LOWER_IX', 'IAM', 'PERMISSIONS'],
+      ],
+    );
+    assert.deepEqual(
+      await rows(`SELECT index_owner, index_name FROM dba_constraints
+      WHERE owner='IAM' AND constraint_name='CROSS_PERMISSION_UQ'`),
+      [['INDEX_SCHEMA', 'PERMISSION_KEY_IX']],
+    );
+    assert.deepEqual(
+      await rows(`SELECT column_name, column_position FROM dba_ind_columns
+        WHERE index_owner='INDEX_SCHEMA' AND index_name='PERMISSION_KEY_IX'
+        ORDER BY column_position`),
+      [
+        ['PERMISSION_ID', 1],
+        ['PERMISSION_KEY', 2],
+      ],
+    );
+    assert.deepEqual(
+      await rows(
+        `SELECT privilege FROM dba_tab_privs WHERE grantee='INDEX_SCHEMA'`,
+      ),
+      [],
+    );
+
+    assert.deepEqual(
       await rows(`SELECT column_name, data_type, data_precision, data_scale,
       char_length, char_used FROM dba_tab_columns
       WHERE owner='IAM' AND table_name='PERMISSIONS'

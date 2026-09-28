@@ -225,3 +225,39 @@ test('a failed constraint member batch never publishes partial cache entries', a
   );
   assert.equal(memberQueries, 2);
 });
+
+test('single and batched index member reads retain each cross-owner index identity', async () => {
+  for (const batchSize of [1, 32]) {
+    const base = benchmarkConnection({
+      tables: 1,
+      constraints: 0,
+      indexes: 3,
+      viewDepth: 0,
+      latencyMs: 0,
+    });
+    const connection = intercept(base.connection, (sql, rows) =>
+      sql.includes('FROM dba_indexes')
+        ? rows.map((row, position) => ({
+            ...row,
+            OWNER: position === 1 ? 'Mixed "Owner' : 'INDEX_ONLY',
+          }))
+        : rows,
+    );
+    const table = await new OracleCatalog(
+      connection,
+      'dba',
+      undefined,
+      batchSize,
+    ).table({ owner: 'APP', name: 'T0' });
+    assert.deepEqual(
+      table.indexes.map((index) => index.reference.owner),
+      ['INDEX_ONLY', 'Mixed "Owner', 'INDEX_ONLY'],
+    );
+    assert.ok(
+      table.indexes.every(
+        (index) => index.keys[0].expression === 'ABS("VALUE")',
+      ),
+    );
+    assert.ok(table.indexes.every((index) => index.dependencies.length === 0));
+  }
+});

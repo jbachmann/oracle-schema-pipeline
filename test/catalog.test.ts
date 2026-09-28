@@ -530,3 +530,74 @@ test('default ALL scope never falls back to DBA when metadata is inaccessible', 
   assert.ok(statements[0].includes('FROM all_views'));
   assert.ok(!statements[0].includes('dba_'));
 });
+
+test('index dependencies use exact cross-owner identity and reject incomplete owner metadata', async () => {
+  for (const scope of ['all', 'dba'] as const) {
+    const observed: Array<{ sql: string; binds: Record<string, string> }> = [];
+    const base = tableConnection((sql, rows) => {
+      if (sql.includes('FROM dba_indexes'))
+        return rows.map((row) => ({ ...row, OWNER: 'Index Owner' }));
+      if (sql.includes('FROM dba_dependencies'))
+        return [
+          {
+            REFERENCED_OWNER: 'UTIL',
+            REFERENCED_NAME: 'PKG',
+            REFERENCED_TYPE: 'PACKAGE',
+            REFERENCED_LINK_NAME: null,
+          },
+          {
+            REFERENCED_OWNER: 'UTIL',
+            REFERENCED_NAME: 'PKG',
+            REFERENCED_TYPE: 'PACKAGE',
+            REFERENCED_LINK_NAME: null,
+          },
+        ];
+      return rows;
+    });
+    const connection = {
+      async execute(sql: string, binds: Record<string, string>, options: any) {
+        observed.push({ sql, binds });
+        return base.execute(sql.replaceAll('all_', 'dba_'), binds, options);
+      },
+    } as unknown as Connection;
+    const table = await new OracleCatalog(connection, scope).table(reference);
+    assert.deepEqual(table.indexes[0].dependencies, [
+      {
+        reference: { owner: 'UTIL', name: 'PKG' },
+        type: 'PACKAGE',
+        databaseLink: null,
+      },
+    ]);
+    const query = observed.find((entry) =>
+      entry.sql.includes(`FROM ${scope}_dependencies`),
+    )!;
+    assert.deepEqual(query.binds, {
+      owner: 'Index Owner',
+      indexName: 'IX_VALUE',
+      tableOwner: 'APP',
+      tableName: 'T',
+    });
+    assert.match(query.sql, /d\.type='INDEX'/);
+    assert.ok(
+      observed.every(
+        (entry) => !entry.sql.includes(scope === 'all' ? 'dba_' : 'all_'),
+      ),
+    );
+  }
+  const incomplete = tableConnection((sql, rows) =>
+    sql.includes('FROM dba_dependencies')
+      ? [
+          {
+            REFERENCED_OWNER: null,
+            REFERENCED_NAME: 'F',
+            REFERENCED_TYPE: 'FUNCTION',
+            REFERENCED_LINK_NAME: null,
+          },
+        ]
+      : rows,
+  );
+  await assert.rejects(
+    new OracleCatalog(incomplete, 'dba').table(reference),
+    /CATALOG_INCOMPLETE_METADATA.*REFERENCED_OWNER/,
+  );
+});
