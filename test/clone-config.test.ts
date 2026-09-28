@@ -194,3 +194,63 @@ test('trusted prerequisite SQL permits sequence START WITH and PL/SQL loop EXIT'
     sql,
   );
 });
+
+test('retry ignores source and selection settings, validates destination, and uses saved policy for current prerequisites', async () => {
+  const { loadRetryConfig } = await import('../scripts/clone-config.js');
+  const { policySchema } = await import('../src/model.js');
+  const root = await mkdtemp(join(tmpdir(), 'retry-config-'));
+  const path = join(root, 'config.json');
+  const minimal = { version: 1, destination: config().destination };
+  for (const extra of [
+    {},
+    { source: null, objects: 123, policy: false },
+    {
+      source: { tnsnames: 'missing.ora', password: '' },
+      objects: 'missing',
+      policy: 'missing',
+    },
+  ]) {
+    await writeFile(path, JSON.stringify({ ...minimal, ...extra }));
+    const loaded = await loadRetryConfig(path, policySchema.parse({}));
+    assert.equal(loaded.config.destination.port, 1522);
+    assert.equal('source' in loaded.config, false);
+    await assert.rejects(loadCloneConfig(path), /CLONE_CONFIG_INVALID/);
+    await assert.rejects(
+      loadRetryConfig(path, policySchema.parse({ createSchemas: false })),
+      /CLONE_PREREQUISITE_REQUIRED/,
+    );
+  }
+  for (const extra of [
+    { surprise: true },
+    { version: 2 },
+    { destination: { password: 'REPLACE_PASSWORD' } },
+    { destination: { ...minimal.destination, port: 0 } },
+  ]) {
+    await writeFile(path, JSON.stringify({ ...minimal, ...extra }));
+    await assert.rejects(
+      loadRetryConfig(path, policySchema.parse({})),
+      /CLONE_CONFIG_INVALID/,
+    );
+  }
+  await writeFile(
+    path,
+    JSON.stringify({ ...minimal, prerequisiteSql: 'setup.sql' }),
+  );
+  for (const sql of ['SELECT 1 FROM dual;', 'SELECT 2 FROM dual;']) {
+    await writeFile(join(root, 'setup.sql'), sql);
+    assert.equal(
+      (
+        await loadRetryConfig(
+          path,
+          policySchema.parse({ createSchemas: false }),
+        )
+      ).prerequisite?.toString(),
+      sql,
+    );
+  }
+  await writeFile(join(root, 'setup.sql'), '@unsafe.sql');
+  await assert.rejects(
+    loadRetryConfig(path, policySchema.parse({})),
+    /CLONE_CONFIG_INVALID/,
+  );
+});

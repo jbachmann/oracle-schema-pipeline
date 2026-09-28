@@ -33,6 +33,17 @@ Results are immutable, secret-free summaries. Missing results indicate interrupt
 not success. SQL*Plus uses fixed nonzero failure statuses; orchestration adapts only
 the exact generated client preamble, leaving source SQL fragments opaque.
 
+`db:clone-retry` may reuse a trusted existing generated SQL bundle. Generation
+must have completed in the original attempt: retry validates the supported target,
+its completion bundle and SQL preamble, retains the checked bytes, and publishes
+fresh independent copies with a new canonical completion manifest before reset.
+It performs no source access or generation. Current destination settings and guarded
+prerequisites apply against the saved target policy. Each retry owns the same shared
+lock and follows the same identity checks, destructive reset and verification flow.
+Original artifacts remain immutable; separate retry hashes record consumed bytes,
+without claiming an authenticated SQL-to-target relationship. The invocation itself
+authorizes the disposable local reset, as with `db:clone`.
+
 ## Consequences
 
 `db:clone` deliberately becomes destructive after generation. The former seeded

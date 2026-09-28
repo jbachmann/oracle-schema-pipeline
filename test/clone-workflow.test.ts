@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, access } from 'node:fs/promises';
@@ -425,4 +426,261 @@ test('clone displays extraction summaries from stderr progress records', async (
     ),
   );
   assert.ok(!logs.some((line) => line.includes('Extraction extract: failure')));
+});
+
+test('retry replays retained SQL, shares lifecycle, ignores unusable source and preserves earlier attempts', async () => {
+  const { retryCloneDatabase } = await import('../scripts/clone-workflow.js');
+  const { generatedReplay } = await import('../scripts/compose-destination.js');
+  const root = await fixture(true);
+  const first = await cloneDatabase({
+    root,
+    ...seams('replay'),
+    log: () => {},
+  });
+  const names = [
+    'clone.sql',
+    'target.json',
+    'report.json',
+    'target.json.complete.json',
+    'run-result.json',
+  ];
+  const original = await Promise.all(
+    names.map((name) => readFile(join(first.directory, name))),
+  );
+  await writeFile(
+    join(root, 'config/local/config.json'),
+    JSON.stringify({
+      version: 1,
+      source: null,
+      objects: 'missing',
+      policy: 'missing',
+      destination: { password: 'dest-secret' },
+      prerequisiteSql: 'setup.sql',
+    }),
+  );
+  await writeFile(join(root, 'config/local/setup.sql'), 'SELECT 2 FROM dual;');
+  const seam = seams(),
+    sql: string[] = [],
+    logs: string[] = [];
+  const dest = seam.destination();
+  const retry = await retryCloneDatabase({
+    root,
+    input: first.directory,
+    lockPath: join(root, 'artifacts/.db-clone.lock'),
+    run: async () => {
+      throw new Error('Pipeline must never run');
+    },
+    destination: (loaded) => {
+      assert.equal('source' in loaded.config, false);
+      return {
+        ...dest,
+        sql: async (text) => {
+          sql.push(text);
+          await dest.sql(text);
+        },
+      };
+    },
+    log: (line) => logs.push(line),
+  });
+  assert.equal(retry.result.status, 'succeeded');
+  assert.match(retry.directory, /db-clone-retry-/);
+  assert.deepEqual(seam.order, [
+    'preflight',
+    'identity',
+    'reset',
+    'startup',
+    'sql-1',
+    'sql-2',
+    'replay',
+    'sql-3',
+  ]);
+  assert.equal(sql[0], 'SELECT 2 FROM dual;');
+  assert.equal(sql[2], generatedReplay(original[0].toString()));
+  assert.notEqual(
+    retry.result.prerequisite?.sha256,
+    first.result.prerequisite?.sha256,
+  );
+  assert.deepEqual(
+    logs.filter((line) => line.startsWith('Clone stage:')),
+    [
+      'retry-input',
+      'config',
+      'preflight',
+      'reset-preflight',
+      'reset',
+      'startup',
+      'prerequisite',
+      'setup-verification',
+      'replay',
+      'verification',
+    ].map((stage) => `Clone stage: ${stage}`),
+  );
+  const next = await retryCloneDatabase({
+    root,
+    input: retry.directory,
+    lockPath: join(root, 'artifacts/.db-clone.lock'),
+    ...seams(),
+    log: () => {},
+  });
+  assert.equal(next.result.status, 'succeeded');
+  assert.notEqual(next.directory, retry.directory);
+  for (const [index, name] of names.entries())
+    assert.deepEqual(
+      await readFile(join(first.directory, name)),
+      original[index],
+    );
+});
+for (const [failure, code] of [
+  ['preflight', 'CLONE_DOCKER_UNAVAILABLE'],
+  ['identity', 'CLONE_STAGE_FAILED'],
+  ['reset', 'CLONE_RESET_FAILED'],
+  ['startup', 'CLONE_STARTUP_FAILED'],
+  ['sql-1', 'CLONE_PREREQUISITE_FAILED'],
+  ['sql-2', 'CLONE_PREREQUISITE_FAILED'],
+  ['replay', 'CLONE_REPLAY_FAILED'],
+  ['sql-3', 'CLONE_VERIFICATION_FAILED'],
+])
+  test(`retry ${failure} failure preserves correct result and exit code`, async () => {
+    const { retryCloneDatabase } = await import('../scripts/clone-workflow.js');
+    const root = await fixture(true);
+    const first = await cloneDatabase({ root, ...seams(), log: () => {} });
+    const retry = await retryCloneDatabase({
+      root,
+      input: first.directory,
+      lockPath: join(root, 'artifacts/.db-clone.lock'),
+      ...seams(failure),
+      log: () => {},
+    });
+    assert.equal(retry.result.status, 'failed');
+    assert.equal(retry.result.errorCode, code);
+    assert.equal(retry.result.childExitCode, 1);
+    assert.equal(
+      retry.result.destinationResetStarted,
+      !['preflight', 'identity'].includes(failure),
+    );
+  });
+test('retry invalid input and snapshot publication failure never reach destination', async () => {
+  const { retryCloneDatabase } = await import('../scripts/clone-workflow.js');
+  const root = await fixture();
+  const first = await cloneDatabase({ root, ...seams(), log: () => {} });
+  const seam = seams();
+  const failed = await retryCloneDatabase({
+    root,
+    input: 'nonexistent',
+    ...seam,
+    lockPath: join(root, 'artifacts/.db-clone.lock'),
+    log: () => {},
+  });
+  assert.equal(failed.result.errorCode, 'OUTPUT_INCOMPLETE');
+  assert.equal(failed.result.destinationResetStarted, false);
+  // Force the shared publisher to reject snapshot staging in this attempt.
+  const blocked = await retryCloneDatabase({
+    root,
+    input: first.directory,
+    ...seam,
+    lockPath: join(root, 'artifacts/.db-clone.lock'),
+    log: (line) => {
+      if (line === 'Clone stage: retry-input') {
+        // A synchronous hook runs before input preparation begins.
+        for (const name of fs.readdirSync(join(root, 'artifacts'))) {
+          if (
+            name.startsWith('db-clone-retry-') &&
+            !fs.existsSync(join(root, 'artifacts', name, 'run-result.json'))
+          )
+            fs.writeFileSync(
+              join(root, 'artifacts', name, 'clone.sql'),
+              'occupied',
+            );
+        }
+      }
+    },
+  });
+  assert.equal(blocked.result.errorCode, 'OUTPUT_EXISTS');
+  assert.equal(blocked.result.destinationResetStarted, false);
+  assert.deepEqual(seam.order, []);
+});
+
+test('normal and retry attempts contend for the same lock; retry cancellation releases it', async () => {
+  const { retryCloneDatabase } = await import('../scripts/clone-workflow.js');
+  const root = await fixture();
+  const first = await cloneDatabase({ root, ...seams(), log: () => {} });
+  const lockPath = join(root, 'artifacts/.db-clone.lock');
+  let release!: () => void, entered!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const controller = new AbortController();
+  const seam = seams();
+  const retry = retryCloneDatabase({
+    root,
+    input: first.directory,
+    lockPath,
+    signal: controller.signal,
+    ...seam,
+    destination: () => ({
+      ...seam.destination(),
+      preflight: async () => {
+        entered();
+        await blocked;
+        return 'sha256:test';
+      },
+    }),
+    log: () => {},
+  });
+  await started;
+  try {
+    const contender = await cloneDatabase({
+      root,
+      lockPath,
+      ...seams(),
+      log: () => {},
+    });
+    assert.equal(contender.result.errorCode, 'CLONE_ALREADY_RUNNING');
+  } finally {
+    controller.abort();
+    release();
+  }
+  const cancelled = await retry;
+  assert.equal(cancelled.result.errorCode, 'CLONE_INTERRUPTED');
+  assert.equal(cancelled.result.destinationResetStarted, false);
+  await assert.rejects(access(lockPath));
+  runResultSchema.parse(
+    JSON.parse(
+      await readFile(join(cancelled.directory, 'run-result.json'), 'utf8'),
+    ),
+  );
+});
+
+test('retry interruption after reset retains partial destination status and publishes failure', async () => {
+  const { retryCloneDatabase } = await import('../scripts/clone-workflow.js');
+  const root = await fixture();
+  const first = await cloneDatabase({ root, ...seams(), log: () => {} });
+  const controller = new AbortController(),
+    seam = seams();
+  const result = await retryCloneDatabase({
+    root,
+    input: first.directory,
+    lockPath: join(root, 'artifacts/.db-clone.lock'),
+    signal: controller.signal,
+    ...seam,
+    destination: () => ({
+      ...seam.destination(),
+      start: async () => {
+        controller.abort();
+      },
+    }),
+    log: () => {},
+  });
+  assert.equal(result.result.errorCode, 'CLONE_INTERRUPTED');
+  assert.equal(result.result.destinationResetStarted, true);
+  assert.ok(!seam.order.includes('replay'));
+  assert.equal(
+    JSON.parse(
+      await readFile(join(result.directory, 'run-result.json'), 'utf8'),
+    ).status,
+    'failed',
+  );
 });

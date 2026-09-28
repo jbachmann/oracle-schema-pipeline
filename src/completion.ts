@@ -31,12 +31,14 @@ const completionSchema = z
 /**
  * Match the manifest to the caller's ordered roles and paths, then verify each
  * file's byte length and SHA-256 digest. Read only caller-supplied paths, never
- * arbitrary paths supplied by a manifest. Missing, invalid, or mismatched data
+ * arbitrary paths supplied by a manifest. Optional caller-retained contents are
+ * checked instead of rereading the file, while canonical paths are still verified.
+ * Missing, invalid, or mismatched data
  * rejects with OUTPUT_INCOMPLETE and preserves the underlying error as its cause.
  */
 export async function verifyCompletion(
   completionPath: string,
-  expected: { role: string; path: string }[],
+  expected: { role: string; path: string; contents?: Uint8Array }[],
 ): Promise<void> {
   try {
     const manifest = completionSchema.parse(
@@ -58,7 +60,8 @@ export async function verifyCompletion(
           'Artifact role or path differs from the expected bundle.',
         );
       }
-      const contents = await readFile(artifactPath);
+      const contents =
+        expectedArtifact.contents ?? (await readFile(artifactPath));
       const sha256 = createHash('sha256').update(contents).digest('hex');
       if (
         artifact.bytes !== contents.byteLength ||

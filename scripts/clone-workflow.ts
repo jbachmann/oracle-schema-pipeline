@@ -1,3 +1,4 @@
+import { prepareRetryInput, RetryInputError } from './clone-retry-input.js';
 import { CloneExtractionProgress, formatPreflight } from './clone-progress.js';
 import { mkdir, mkdtemp, open, readFile, unlink } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
@@ -7,7 +8,11 @@ import { z } from 'zod';
 import { writeJson, OutputError } from '../src/files.js';
 import { verifyCompletion } from '../src/completion.js';
 import { targetDocumentSchema } from '../src/model.js';
-import { loadCloneConfig, type LoadedConfig } from './clone-config.js';
+import {
+  loadCloneConfig,
+  loadRetryConfig,
+  type LoadedDestinationConfig,
+} from './clone-config.js';
 import {
   ComposeDestination,
   generatedReplay,
@@ -54,11 +59,20 @@ export interface WorkflowOptions {
   root: string;
   signal?: AbortSignal;
   run?: Runner;
-  destination?: (loaded: LoadedConfig) => Destination;
+  destination?: (loaded: LoadedDestinationConfig) => Destination;
   log?: (message: string) => void;
 }
-export async function cloneDatabase(
+export function cloneDatabase(options: WorkflowOptions) {
+  return runCloneAttempt(options);
+}
+export function retryCloneDatabase(
+  options: WorkflowOptions & { input: string },
+) {
+  return runCloneAttempt(options, options.input);
+}
+async function runCloneAttempt(
   options: WorkflowOptions,
+  retryInput?: string,
 ): Promise<{ directory: string; result: RunResult }> {
   const { root, signal } = options;
   const log = options.log ?? console.log;
@@ -66,7 +80,10 @@ export async function cloneDatabase(
   const artifacts = join(root, 'artifacts');
   await mkdir(artifacts, { recursive: true, mode: 0o700 });
   const directory = await mkdtemp(
-    join(artifacts, `db-clone-${startedAt.replaceAll(/[:.]/g, '-')}-`),
+    join(
+      artifacts,
+      `db-clone-${retryInput === undefined ? '' : 'retry-'}${startedAt.replaceAll(/[:.]/g, '-')}-`,
+    ),
   );
   const tempDir = join(directory, '.staging');
   const lock = options.lockPath ?? cloneLockPath;
@@ -124,10 +141,26 @@ export async function cloneDatabase(
     } catch {
       throw new CloneError('CLONE_ALREADY_RUNNING');
     }
-    const loaded = await stage('config', 'CLONE_CONFIG_INVALID', () =>
-      loadCloneConfig(join(root, 'config/local/config.json')),
-    );
-    const { config, objects, policy, prerequisite } = loaded;
+    const snapshot =
+      retryInput === undefined
+        ? undefined
+        : await stage('retry-input', 'CLONE_RETRY_INPUT_INVALID', () =>
+            prepareRetryInput(retryInput, directory),
+          );
+    const normalLoaded = snapshot
+      ? undefined
+      : await stage('config', 'CLONE_CONFIG_INVALID', () =>
+          loadCloneConfig(join(root, 'config/local/config.json')),
+        );
+    const loaded =
+      normalLoaded ??
+      (await stage('config', 'CLONE_CONFIG_INVALID', () =>
+        loadRetryConfig(
+          join(root, 'config/local/config.json'),
+          snapshot!.target.policy,
+        ),
+      ));
+    const { config, prerequisite } = loaded;
     if (prerequisite)
       result.prerequisite = {
         bytes: prerequisite.byteLength,
@@ -141,123 +174,134 @@ export async function cloneDatabase(
       'CLONE_DOCKER_UNAVAILABLE',
       () => destination.preflight((event) => log(formatPreflight(event))),
     );
-    await writeJson(join(directory, 'objects.json'), objects, { tempDir });
-    await writeJson(join(directory, 'policy.json'), policy, { tempDir });
-    const run = options.run ?? runProcess;
     const path = (name: string) => join(directory, name);
-    const pipeline = async (name: string, args: string[], extraction = false) =>
-      stage(name, 'CLONE_STAGE_FAILED', async () => {
-        let publicationCode: string | undefined;
-        try {
-          const execute = (onProgressLine?: (line: string) => void) =>
-            run(
-              process.execPath,
-              [
-                '--import',
-                'tsx',
-                join(root, 'src/cli.ts'),
-                name,
-                ...args,
-                '--temp-dir',
-                tempDir,
-              ],
-              {
-                cwd: root,
-                signal,
-                env: {
-                  ...childEnvironment(),
-                  ...(extraction
-                    ? { ORACLE_PASSWORD: config.source.password }
-                    : {}),
+    if (normalLoaded) {
+      const { config, objects, policy } = normalLoaded;
+      await writeJson(join(directory, 'objects.json'), objects, { tempDir });
+      await writeJson(join(directory, 'policy.json'), policy, { tempDir });
+      const run = options.run ?? runProcess;
+      const pipeline = async (
+        name: string,
+        args: string[],
+        extraction = false,
+      ) =>
+        stage(name, 'CLONE_STAGE_FAILED', async () => {
+          let publicationCode: string | undefined;
+          try {
+            const execute = (onProgressLine?: (line: string) => void) =>
+              run(
+                process.execPath,
+                [
+                  '--import',
+                  'tsx',
+                  join(root, 'src/cli.ts'),
+                  name,
+                  ...args,
+                  '--temp-dir',
+                  tempDir,
+                ],
+                {
+                  cwd: root,
+                  signal,
+                  env: {
+                    ...childEnvironment(),
+                    ...(extraction
+                      ? { ORACLE_PASSWORD: config.source.password }
+                      : {}),
+                  },
+                  onProgressLine: onProgressLine
+                    ? ({ stream, line }) => {
+                        if (stream === 'stderr') onProgressLine(line);
+                      }
+                    : undefined,
+                  onLine: (line) => {
+                    // Retain known publication codes without exposing filenames or raw errors.
+                    publicationCode ??=
+                      /^(OUTPUT_(?:EXISTS|PATH_CONFLICT|PUBLICATION_UNSUPPORTED|PUBLICATION_FAILED|INCOMPLETE)):/.exec(
+                        line,
+                      )?.[1];
+                  },
                 },
-                onProgressLine: onProgressLine
-                  ? ({ stream, line }) => {
-                      if (stream === 'stderr') onProgressLine(line);
-                    }
-                  : undefined,
-                onLine: (line) => {
-                  // Retain known publication codes without exposing filenames or raw errors.
-                  publicationCode ??=
-                    /^(OUTPUT_(?:EXISTS|PATH_CONFLICT|PUBLICATION_UNSUPPORTED|PUBLICATION_FAILED|INCOMPLETE)):/.exec(
-                      line,
-                    )?.[1];
-                },
-              },
-            );
-          return await (extraction
-            ? new CloneExtractionProgress(log).run(execute)
-            : execute());
-        } catch (error) {
-          if (
-            publicationCode &&
-            error instanceof CloneError &&
-            error.code !== 'CLONE_INTERRUPTED'
-          )
-            throw new CloneError(publicationCode, error.childExitCode);
-          throw error;
-        }
-      });
-    const connection = config.source.dsn
-      ? ['--dsn', config.source.dsn]
-      : [
-          '--tnsnames',
-          config.source.tnsnames!,
-          '--tns-alias',
-          config.source.tnsAlias!,
-        ];
-    await pipeline(
-      'extract',
-      [
-        ...connection,
-        '--user',
-        config.source.user,
-        '--catalog-scope',
-        config.source.catalogScope,
-        '--objects',
-        path('objects.json'),
-        '--output',
+              );
+            return await (extraction
+              ? new CloneExtractionProgress(log).run(execute)
+              : execute());
+          } catch (error) {
+            if (
+              publicationCode &&
+              error instanceof CloneError &&
+              error.code !== 'CLONE_INTERRUPTED'
+            )
+              throw new CloneError(publicationCode, error.childExitCode);
+            throw error;
+          }
+        });
+      const connection = config.source.dsn
+        ? ['--dsn', config.source.dsn]
+        : [
+            '--tnsnames',
+            config.source.tnsnames!,
+            '--tns-alias',
+            config.source.tnsAlias!,
+          ];
+      await pipeline(
+        'extract',
+        [
+          ...connection,
+          '--user',
+          config.source.user,
+          '--catalog-scope',
+          config.source.catalogScope,
+          '--objects',
+          path('objects.json'),
+          '--output',
+          path('source.json'),
+          '--progress-json',
+        ],
+        true,
+      );
+      await pipeline('dictionary', [
+        '--input',
         path('source.json'),
-        '--progress-json',
-      ],
-      true,
-    );
-    await pipeline('dictionary', [
-      '--input',
-      path('source.json'),
-      '--output',
-      path('data-dictionary.xlsx'),
-    ]);
-    await pipeline('transform', [
-      '--input',
-      path('source.json'),
-      '--policy',
-      path('policy.json'),
-      '--output',
-      path('target.json'),
-      '--report',
-      path('report.json'),
-    ]);
-    await stage('completion', 'CLONE_STAGE_FAILED', () =>
-      verifyCompletion(path('target.json.complete.json'), [
-        { role: 'target', path: path('target.json') },
-        { role: 'report', path: path('report.json') },
-      ]),
-    );
-    await pipeline('validate', ['--input', path('target.json')]);
-    await pipeline('generate', [
-      '--input',
-      path('target.json'),
-      '--output',
-      path('clone.sql'),
-    ]);
+        '--output',
+        path('data-dictionary.xlsx'),
+      ]);
+      await pipeline('transform', [
+        '--input',
+        path('source.json'),
+        '--policy',
+        path('policy.json'),
+        '--output',
+        path('target.json'),
+        '--report',
+        path('report.json'),
+      ]);
+      await stage('completion', 'CLONE_STAGE_FAILED', () =>
+        verifyCompletion(path('target.json.complete.json'), [
+          { role: 'target', path: path('target.json') },
+          { role: 'report', path: path('report.json') },
+        ]),
+      );
+      await pipeline('validate', ['--input', path('target.json')]);
+      await pipeline('generate', [
+        '--input',
+        path('target.json'),
+        '--output',
+        path('clone.sql'),
+      ]);
+    }
     const { sql, target } = await stage(
       'reset-preflight',
       'CLONE_STAGE_FAILED',
       async () => {
-        const sql = generatedReplay(await readFile(path('clone.sql'), 'utf8'));
-        const target = targetDocumentSchema.parse(
-          JSON.parse(await readFile(path('target.json'), 'utf8')),
-        );
+        const sql =
+          snapshot?.sql ??
+          generatedReplay(await readFile(path('clone.sql'), 'utf8'));
+        const target =
+          snapshot?.target ??
+          targetDocumentSchema.parse(
+            JSON.parse(await readFile(path('target.json'), 'utf8')),
+          );
         await checkLock();
         await destination.identity();
         return { sql, target };
@@ -284,6 +328,12 @@ export async function cloneDatabase(
     result.status = 'succeeded';
     log(`Local listener: 127.0.0.1:${config.destination.port}/FREEPDB1`);
   } catch (error) {
+    if (error instanceof RetryInputError)
+      log(`${error.code}: ${error.guidance}`);
+    if (error instanceof OutputError && error.code === 'OUTPUT_INCOMPLETE')
+      log(
+        'OUTPUT_INCOMPLETE: target/report completion bundle is missing or mismatched; use complete artifacts at their original paths.',
+      );
     result.errorCode =
       error instanceof CloneError || error instanceof OutputError
         ? error.code

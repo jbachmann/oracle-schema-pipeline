@@ -580,6 +580,40 @@ startup/setup/replay failures lose the old database and may leave partial new
 structure. Fix configuration and run again; the command never retries replay into
 a partial database. Before reset, failures leave the previous database intact.
 
+To retry from an existing generated bundle after correcting destination setup:
+
+```bash
+npm run db:clone-retry -- "./artifacts/db-clone-<timestamp>-<suffix>"
+```
+
+This command **deletes and rebuilds the fixed local destination and its volume**,
+with the same safeguards as `db:clone`. It starts replay from the beginning;
+it does not resume partial SQL. It needs `clone.sql`, `target.json`, `report.json`,
+and `target.json.complete.json` at their original paths. A prior successful
+`run-result.json` is unnecessary. SQL alone is insufficient; if generation never
+finished, run a normal clone or prepare the complete bundle offline.
+
+Retry performs no extraction, dictionary, transformation, generation, or source
+connection. It reads current destination settings and optional `prerequisiteSql`
+from `config/local/config.json`; source, objects, and policy settings are ignored
+and may be omitted. The saved target policy determines prerequisite requirements.
+Current prerequisite bytes are guarded and their hash is recorded for this attempt.
+
+Before reset, retry validates the target and completion bundle, checks the supported
+SQL preamble, and publishes independent exact copies in a fresh
+`artifacts/db-clone-retry-<timestamp>-<suffix>/` directory. A new completion manifest
+and `retry-input.json` record the snapshot; the latter contains only ordered SQL,
+target, and report byte lengths and SHA-256 hashes. The original folder stays
+unchanged, and the new folder can be retried again. These hashes record consumed
+bytes; they do not prove SQL corresponds to the model. Use trusted local artifacts.
+
+Old model versions and moved folders with mismatched completion paths are rejected.
+`CLONE_RETRY_INPUT_INVALID` identifies unsupported or invalid artifacts;
+`OUTPUT_INCOMPLETE` identifies missing or mismatched completion bundles. Failures
+before reset preserve the destination; failures after reset leave a partial database
+and retained artifacts. Correct the input or current setup and invoke retry again.
+`npm run db:clone-retry -- --help` requires no configuration or Docker access.
+
 A per-user lock, `oracle-schema-pipeline-local-<uid>.lock` under the Node.js
 system temporary directory, prevents concurrent runs across checkouts. SIGINT/SIGTERM stop
 children and attempt to publish failure/release the owned lock. A missing result

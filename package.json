@@ -17,7 +17,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:db:clone": "node --import tsx test/scripts/clone-compose-database.ts",
-    "test:db:reset-destination": "node --import tsx test/scripts/reset-compose-destination.ts"
+    "test:db:reset-destination": "node --import tsx test/scripts/reset-compose-destination.ts",
+    "db:clone-retry": "node --import tsx scripts/clone-retry.ts"
   },
   "dependencies": {
     "exceljs": "4.4.0",

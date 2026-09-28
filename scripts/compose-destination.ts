@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { PreflightProgress, type PreflightObserver } from './clone-progress.js';
 import type { CommandOptions } from './process.js';
 import type { TargetDocument } from '../src/model.js';
-import type { LoadedConfig } from './clone-config.js';
+import type { DestinationSettings } from './clone-config.js';
 import {
   childEnvironment,
   CloneError,
@@ -133,7 +133,7 @@ export class ComposeDestination implements Destination {
   private readonly env: NodeJS.ProcessEnv;
   constructor(
     private root: string,
-    private config: LoadedConfig['config']['destination'],
+    private config: DestinationSettings,
     private signal?: AbortSignal,
     private run: Runner = runProcess,
   ) {

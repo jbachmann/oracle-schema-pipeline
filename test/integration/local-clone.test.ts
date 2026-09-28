@@ -14,8 +14,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import oracle from 'oracledb';
-import { cloneDatabase } from '../../scripts/clone-workflow.js';
-import { childEnvironment, runProcess } from '../../scripts/process.js';
+import {
+  cloneDatabase,
+  retryCloneDatabase,
+} from '../../scripts/clone-workflow.js';
+import {
+  childEnvironment,
+  runProcess,
+  CloneError,
+} from '../../scripts/process.js';
 import {
   ComposeDestination,
   project,
@@ -333,6 +340,99 @@ test(
         );
       } finally {
         await connection.close();
+      }
+      assert.deepEqual(await sourceFacts(), before);
+      // Own the operational destination before injecting a partial replay failure.
+      class FailingReplayDestination extends ComposeDestination {
+        override async sql(sql: string) {
+          if (sql.includes('DEFERRED_SEGMENT_CREATION')) {
+            await super.sql('CREATE TABLE SYSTEM.RETRY_MARKER (ID NUMBER);');
+            throw new CloneError('CLONE_STAGE_FAILED', 1);
+          }
+          return super.sql(sql);
+        }
+      }
+      const failedReplay = await cloneDatabase({
+        root,
+        destination: (loaded) =>
+          new FailingReplayDestination(root, loaded.config.destination),
+      });
+      assert.equal(failedReplay.result.errorCode, 'CLONE_REPLAY_FAILED');
+      await destination.sql('SELECT * FROM SYSTEM.RETRY_MARKER;');
+      const savedNames = [
+        'clone.sql',
+        'target.json',
+        'report.json',
+        'target.json.complete.json',
+        'run-result.json',
+      ];
+      const originals = await Promise.all(
+        savedNames.map((name) => readFile(join(failedReplay.directory, name))),
+      );
+      await writeFile(
+        join(root, 'config/local/config.json'),
+        JSON.stringify({
+          version: 1,
+          destination: config.destination,
+          source: null,
+          objects: 'unavailable',
+          policy: 'unavailable',
+        }),
+      );
+      const retried = await retryCloneDatabase({
+        root,
+        input: failedReplay.directory,
+      });
+      assert.equal(
+        retried.result.status,
+        'succeeded',
+        JSON.stringify(retried.result),
+      );
+      for (const [index, name] of savedNames.entries())
+        assert.deepEqual(
+          await readFile(join(failedReplay.directory, name)),
+          originals[index],
+        );
+      const retryConnection = await oracle.getConnection({
+        user: 'SYSTEM',
+        password: config.destination.password,
+        connectString: '127.0.0.1:1529/FREEPDB1',
+      });
+      try {
+        assert.deepEqual(
+          (
+            await retryConnection.execute(
+              "SELECT COUNT(*) FROM dba_tables WHERE owner='SYSTEM' AND table_name='RETRY_MARKER'",
+            )
+          ).rows,
+          [[0]],
+        );
+        assert.deepEqual(
+          (
+            await retryConnection.execute(
+              'SELECT COUNT(*) FROM CLONE_FIXTURE.T',
+            )
+          ).rows,
+          [[0]],
+        );
+        assert.deepEqual(
+          (
+            await retryConnection.execute(
+              'SELECT COUNT(*) FROM CLONE_FIXTURE.V',
+            )
+          ).rows,
+          [[0]],
+        );
+        assert.deepEqual(
+          (
+            await retryConnection.execute(
+              "SELECT comments FROM dba_tab_comments WHERE owner='CLONE_FIXTURE' AND table_name='T'",
+            )
+          ).rows,
+          [['clone table']],
+        );
+      } finally {
+        await retryConnection.close();
       }
       assert.deepEqual(await sourceFacts(), before);
       // Acknowledgement requires actual owner/sequence provisioning.
