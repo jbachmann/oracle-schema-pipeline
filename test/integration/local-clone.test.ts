@@ -28,10 +28,163 @@ import {
   project,
   volume,
   verificationChecks,
+  generatedReplay,
+  setupChecks,
+  sqlSession,
 } from '../../scripts/compose-destination.js';
 import { loadCloneConfig } from '../../scripts/clone-config.js';
-import { targetDocumentSchema } from '../../src/model.js';
+import { targetDocumentSchema, policySchema } from '../../src/model.js';
 import { testComposeArgs, rejectDsnOverrides } from '../scripts/compose.js';
+import { generateSql } from '../../src/generate.js';
+import { transformSource } from '../../src/transform.js';
+import { ordinaryTable, ordinaryView, sourceFixture } from '../fixtures.js';
+
+test(
+  'conditional user creation preserves accounts and rejects role conflicts on the pinned Oracle image',
+  { timeout: 1_500_000 },
+  async () => {
+    rejectDsnOverrides();
+    if (process.env.ORACLE_INTEGRATION_USE_EXISTING !== '1') {
+      await runProcess(
+        'docker',
+        [
+          ...testComposeArgs,
+          'up',
+          '-d',
+          '--wait',
+          '--wait-timeout',
+          '1200',
+          'oracle-destination',
+        ],
+        {
+          env: childEnvironment(),
+          timeoutMs: 1_230_000,
+        },
+      );
+    }
+    const errors: string[] = [];
+    const sql = (input: string) =>
+      runProcess(
+        'docker',
+        [
+          ...testComposeArgs,
+          'exec',
+          '-T',
+          'oracle-destination',
+          'sqlplus',
+          '-s',
+          '/ as sysdba',
+        ],
+        {
+          env: childEnvironment(),
+          input: sqlSession(input),
+          onProgressLine: ({ line }) => {
+            const code = /ORA-\d{5}/.exec(line)?.[0];
+            if (code) errors.push(code);
+          },
+        },
+      );
+    const targetFor = (owners: string[], createSchemas = true) => {
+      const source = sourceFixture();
+      source.tables = owners.map((owner) => ordinaryTable(owner, 'T'));
+      source.targetTables = source.tables.map((table) => table.reference);
+      return transformSource(source, policySchema.parse({ createSchemas }));
+    };
+    const conditional = (owner: string) =>
+      generateSql(targetFor([owner])).match(/DECLARE[\s\S]*?END;\n\//)![0];
+    const cleanup = `
+BEGIN EXECUTE IMMEDIATE 'DROP USER SKIP_A_EXISTING CASCADE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -1918 THEN RAISE; END IF; END;
+/
+BEGIN EXECUTE IMMEDIATE 'DROP USER SKIP_Z_NEW CASCADE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -1918 THEN RAISE; END IF; END;
+/
+BEGIN EXECUTE IMMEDIATE 'DROP USER SKIP_VIEW CASCADE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -1918 THEN RAISE; END IF; END;
+/
+BEGIN EXECUTE IMMEDIATE 'DROP USER SKIP_INDEX CASCADE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -1918 THEN RAISE; END IF; END;
+/
+BEGIN EXECUTE IMMEDIATE 'DROP ROLE SKIP_ROLE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -1919 THEN RAISE; END IF; END;
+/`;
+    await sql(cleanup);
+    try {
+      await sql(
+        'CREATE USER SKIP_A_EXISTING NO AUTHENTICATION DEFAULT TABLESPACE SYSTEM QUOTA 1M ON USERS;\nGRANT CREATE SESSION TO SKIP_A_EXISTING;\nCREATE ROLE SKIP_ROLE;',
+      );
+      const facts = () =>
+        sql(`SELECT username, authentication_type, default_tablespace, account_status FROM dba_users WHERE username IN ('SYS', 'SKIP_A_EXISTING') ORDER BY username;
+SELECT username, tablespace_name, max_bytes FROM dba_ts_quotas WHERE username IN ('SYS', 'SKIP_A_EXISTING') ORDER BY username, tablespace_name;
+SELECT grantee, privilege FROM dba_sys_privs WHERE grantee IN ('SYS', 'SKIP_A_EXISTING') ORDER BY grantee, privilege;`);
+      const before = await facts();
+      await sql(conditional('SYS'));
+      const target = targetFor(['SKIP_A_EXISTING', 'SKIP_Z_NEW']);
+      target.tables[1].indexes[0].reference.owner = 'SKIP_INDEX';
+      const key = target.tables[1].constraints[0];
+      if (key.kind === 'primary-key') key.backingIndex!.owner = 'SKIP_INDEX';
+      const view = ordinaryView('V');
+      view.reference.owner = 'SKIP_VIEW';
+      target.views = [view];
+      target.targetViews = [view.reference];
+      await sql(
+        setupChecks(target) +
+          generatedReplay(generateSql(target)) +
+          '\n' +
+          verificationChecks(target),
+      );
+      assert.equal(await facts(), before);
+      assert.match(
+        await sql(
+          "SELECT authentication_type, default_tablespace FROM dba_users WHERE username='SKIP_Z_NEW';",
+        ),
+        /NONE\s+USERS/,
+      );
+      await assert.rejects(
+        sql(
+          conditional('SKIP_ROLE') +
+            '\nCREATE TABLE SKIP_Z_NEW.AFTER_FAILURE (ID NUMBER);',
+        ),
+      );
+      assert.ok(errors.includes('ORA-01920'));
+      errors.length = 0;
+      await assert.rejects(
+        sql(
+          generatedReplay(generateSql(target)) +
+            '\nCREATE TABLE SKIP_Z_NEW.AFTER_FAILURE (ID NUMBER);',
+        ),
+      );
+      assert.ok(errors.includes('ORA-00955'));
+      await sql(setupChecks(targetFor(['SKIP_A_EXISTING'], false)));
+      await assert.rejects(
+        sql(setupChecks(targetFor(['SKIP_MISSING'], false))),
+      );
+      // A proxy session proves missing CREATE USER privilege is still fatal.
+      await sql('ALTER USER SKIP_A_EXISTING GRANT CONNECT THROUGH SYSTEM;');
+      const portOutput = await runProcess(
+        'docker',
+        [...testComposeArgs, 'port', 'oracle-destination', '1521'],
+        { env: childEnvironment() },
+      );
+      const restricted = await oracle.getConnection({
+        user: 'SYSTEM[SKIP_A_EXISTING]',
+        password: process.env.ORACLE_PWD ?? 'OracleDev123',
+        connectString: `127.0.0.1:${/:(\d+)\s*$/.exec(portOutput)![1]}/FREEPDB1`,
+      });
+      try {
+        await assert.rejects(
+          restricted.execute(conditional('SKIP_MISSING').replace(/\n\/$/, '')),
+          /ORA-01031/,
+        );
+      } finally {
+        await restricted.close();
+      }
+      assert.match(
+        await sql(
+          "SELECT COUNT(*) FROM dba_tables WHERE owner='SKIP_Z_NEW' AND table_name='AFTER_FAILURE';",
+        ),
+        /^\s*0\s*$/,
+      );
+    } finally {
+      await sql(cleanup);
+    }
+  },
+);
 
 // Opt in because this suite replaces the fixed operational project. It refuses
 // any pre-existing operational resources before taking ownership for this test.

@@ -12,7 +12,7 @@ import {
   failedPreparationFixture,
 } from './preparation-fixtures.js';
 
-// Captured from the original preparation implementation before extraction.
+// Preparation regression snapshot, updated for conditional schema creation.
 const expected: Record<
   string,
   { preparation: SqlPreparation; diagnostics: Diagnostic[] }

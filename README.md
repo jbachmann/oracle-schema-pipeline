@@ -298,11 +298,16 @@ it does not change the database parameter. Set EXTENDED only when the target has
 been configured appropriately. Character sets and NLS behavior also need to be
 compatible with the intended reconstruction.
 
-With `createSchemas: true`, generated users are schema-only (`NO AUTHENTICATION`)
-and receive unlimited quota on the specified, already-existing target tablespace.
-Quota does not preallocate space. Original source passwords, roles and application
-privileges are not copied. Use `createSchemas: false` for preprovisioned schemas;
-their actual default tablespaces and quotas then control allocation.
+With `createSchemas: true` (the default), generation creates missing owners and
+skips existing users, including `SYS`. New users are schema-only (`NO AUTHENTICATION`)
+and receive the configured default tablespace and unlimited quota on that
+already-existing tablespace. Quota does not preallocate space. Existing users retain
+their authentication, privileges, default tablespace, and quota; source passwords,
+roles, and application privileges are not copied. Generated PL/SQL checks
+`ALL_USERS` before creation; role-name conflicts and other creation errors remain
+fatal. Existing tables and other objects retain their usual errors: this does not
+make replay idempotent. Use `createSchemas: false` to emit no user creation and
+require every owner to be preprovisioned for local cloning.
 
 Non-table prerequisites are recorded, not recursively exported. To use them,
 provision the destination object and direct grants, use `createSchemas: false`, and
@@ -580,8 +585,8 @@ For `CLONE_PREREQUISITE_FAILED`, check `lastStage` in `run-result.json`.
 required destination state could not be verified. The console and result now
 include `errorDetail` with the unmet requirement and repair guidance when a setup
 check fails, plus `oracleErrorCodes` when available. Checks require an online
-`defaultTablespace`, matching `maxStringSize`, absent schema owners when
-`createSchemas=true` (present when false), and valid `externalPrerequisites` in
+`defaultTablespace`, matching `maxStringSize`, existing schema owners when
+`createSchemas=false`, and valid `externalPrerequisites` in
 `FREEPDB1`. Raw SQL client output is not retained.
 
 
@@ -609,6 +614,9 @@ connection. It reads current destination settings and optional `prerequisiteSql`
 from `config/local/config.json`; source, objects, and policy settings are ignored
 and may be omitted. The saved target policy determines prerequisite requirements.
 Current prerequisite bytes are guarded and their hash is recorded for this attempt.
+Saved SQL retains its original bytes: older unconditional `CREATE USER` statements
+can still fail on existing users. Generate a fresh bundle at new output paths to
+obtain conditional creation; retry never upgrades or overwrites an old bundle.
 
 Before reset, retry validates the target and completion bundle, checks the supported
 SQL preamble, and publishes independent exact copies in a fresh
@@ -704,8 +712,9 @@ No model repair or SQL-expression parsing is performed. See
 
 Supported indexes retain their exact owner and name, including indexes backing
 primary-key and unique constraints and indexes on included one-hop parents.
-Index-only schemas join table and view owners in automatic schema creation and
-receive the configured default tablespace and quota. With `createSchemas=false`,
+Index-only schemas join table and view owners in conditional schema creation.
+Missing owners receive the configured default tablespace and quota; existing
+users keep their settings. With `createSchemas=false`,
 provision every owner and its quota in advance. Index ownership does not expand
 table selection into that owner's schema.
 

@@ -60,13 +60,13 @@ export function setupRequirements(target: TargetDocument) {
       expected: 1,
       detail: `MAX_STRING_SIZE does not match ${label(target.policy.maxStringSize)}. Set the policy maxStringSize to match the destination, or configure the destination before replay.`,
     },
-    ...schemaOwners(target).map((owner) => ({
-      from: `dba_users WHERE username=${literal(owner)}`,
-      expected: target.policy.createSchemas ? 0 : 1,
-      detail: target.policy.createSchemas
-        ? `Schema ${label(owner)} already exists, but createSchemas=true requires it to be absent. Remove its creation from prerequisiteSql, or use createSchemas=false with all required schemas preprovisioned.`
-        : `Schema ${label(owner)} is missing, but createSchemas=false requires it to exist. Create it in FREEPDB1 using prerequisiteSql.`,
-    })),
+    ...(target.policy.createSchemas ? [] : schemaOwners(target)).map(
+      (owner) => ({
+        from: `dba_users WHERE username=${literal(owner)}`,
+        expected: 1,
+        detail: `Schema ${label(owner)} is missing, but createSchemas=false requires it to exist. Create it in FREEPDB1 using prerequisiteSql.`,
+      }),
+    ),
     ...target.policy.externalPrerequisites.map((item) => ({
       from: `dba_objects WHERE owner=${literal(item.reference.owner)} AND object_name=${literal(item.reference.name)} AND object_type=${literal(item.type)} AND status='VALID'`,
       expected: 1,

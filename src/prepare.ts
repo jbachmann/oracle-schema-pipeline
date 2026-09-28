@@ -64,10 +64,14 @@ function emitSchemas(document: TargetDocument, { emit }: SqlCollector): void {
     return;
   }
   const tablespace = quoteIdentifier(document.policy.defaultTablespace);
+  const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
   for (const owner of schemaOwners(document)) {
+    const create = `CREATE USER ${quoteIdentifier(owner)} NO AUTHENTICATION DEFAULT TABLESPACE ${tablespace} QUOTA UNLIMITED ON ${tablespace}`;
+    // Native IF NOT EXISTS also skips conflicting roles on the pinned Oracle
+    // image. Check users explicitly and let every creation error remain fatal.
     emit(
       quoteIdentifier(owner),
-      `CREATE USER ${quoteIdentifier(owner)} NO AUTHENTICATION DEFAULT TABLESPACE ${tablespace} QUOTA UNLIMITED ON ${tablespace};`,
+      `DECLARE\n  n NUMBER;\nBEGIN\n  SELECT COUNT(*) INTO n FROM ALL_USERS WHERE USERNAME = ${literal(owner)};\n  IF n = 0 THEN\n    EXECUTE IMMEDIATE ${literal(create)};\n  END IF;\nEND;\n/`,
     );
   }
 }

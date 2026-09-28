@@ -91,6 +91,25 @@ test('retry snapshots exact independent bytes without a result or provenance and
     })),
   );
 });
+test('retry preserves legacy unconditional user creation without regenerating SQL', async () => {
+  const { input, output } = await fixture();
+  const path = join(input, 'clone.sql');
+  const current = await readFile(path, 'utf8');
+  const legacy = current.replace(
+    /DECLARE\n  n NUMBER;[\s\S]*?END;\n\//g,
+    (block) => {
+      const statement = /EXECUTE IMMEDIATE '((?:[^']|'')*)';/.exec(block)![1];
+      return statement.replaceAll("''", "'") + ';';
+    },
+  );
+  assert.notEqual(legacy, current);
+  await writeFile(path, legacy);
+  const result = await prepareRetryInput(input, output);
+  assert.equal(result.sql, generatedReplay(legacy));
+  assert.equal(await readFile(join(output, 'clone.sql'), 'utf8'), legacy);
+  assert.equal(await readFile(path, 'utf8'), legacy);
+  assert.doesNotMatch(result.sql, /ALL_USERS|IF NOT EXISTS/);
+});
 for (const name of [
   'clone.sql',
   'target.json',

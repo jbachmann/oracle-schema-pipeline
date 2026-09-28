@@ -62,7 +62,11 @@ async function fixture(prerequisite = false) {
     );
   return root;
 }
-function seams(failure?: string, controller?: AbortController) {
+function seams(
+  failure?: string,
+  controller?: AbortController,
+  policy = policySchema.parse({}),
+) {
   const order: string[] = [],
     environments: NodeJS.ProcessEnv[] = [];
   const run: Runner = async (_, args, options) => {
@@ -77,7 +81,7 @@ function seams(failure?: string, controller?: AbortController) {
     if (stage === 'dictionary')
       await writeNewFile(arg('--output'), 'workbook', publication);
     if (stage === 'transform') {
-      const target = transformSource(source, policySchema.parse({}));
+      const target = transformSource(source, policy);
       await publishArtifacts(
         [
           {
@@ -94,7 +98,7 @@ function seams(failure?: string, controller?: AbortController) {
     if (stage === 'generate') {
       await writeNewFile(
         arg('--output'),
-        generateSql(transformSource(source, policySchema.parse({}))),
+        generateSql(transformSource(source, policy)),
         publication,
       );
       if (controller) controller.abort();
@@ -692,6 +696,8 @@ test('retry interruption after reset retains partial destination status and publ
 test('setup verification reports each unmet requirement', async () => {
   const target = transformSource(source, policySchema.parse({}));
   const requirements = setupRequirements(target);
+  assert.equal(requirements.length, 2);
+  assert.doesNotMatch(setupChecks(target), /dba_users/);
   assert.match(setupChecks(target), /OSP_SETUP_CHECK_0/);
   for (const [index, requirement] of requirements.entries()) {
     const root = await fixture();
@@ -729,6 +735,41 @@ test('setup verification reports each unmet requirement', async () => {
   }
 });
 
+test('external prerequisite failures retain their indexed detail with required owners', async () => {
+  const policy = policySchema.parse({
+    createSchemas: false,
+    externalPrerequisites: [
+      { reference: { owner: 'APP', name: 'SEQ' }, type: 'SEQUENCE' },
+    ],
+  });
+  const requirements = setupRequirements(transformSource(source, policy));
+  const index = requirements.length - 1;
+  const root = await fixture(true);
+  await writeFile(
+    join(root, 'config/local/policy.json'),
+    JSON.stringify(policy),
+  );
+  const seam = seams(undefined, undefined, policy);
+  const result = await cloneDatabase({
+    root,
+    run: seam.run,
+    log: () => {},
+    destination: () => ({
+      ...seam.destination(),
+      sql: async (sql: string) => {
+        if (!sql.includes('OSP_SETUP_CHECK_')) return;
+        throw new CloneError('CLONE_STAGE_FAILED', 1, {
+          oracleCodes: ['ORA-20001'],
+          setupCheckIndex: index,
+        });
+      },
+    }),
+  });
+  assert.equal(result.result.lastStage, 'setup-verification');
+  assert.equal(result.result.errorDetail, requirements[index].detail);
+  assert.match(result.result.errorDetail!, /External prerequisite SEQUENCE/);
+});
+
 test('setup requirements explain preprovisioned schemas and external objects', () => {
   const target = transformSource(
     source,
@@ -751,6 +792,11 @@ test('setup requirements explain preprovisioned schemas and external objects', (
     setupChecks(target),
     new RegExp(`OSP_SETUP_CHECK_${requirements.length - 1}`),
   );
+  assert.equal(
+    requirements.length,
+    3 + new Set(target.tables.map((table) => table.reference.owner)).size,
+  );
+  assert.equal(requirements.at(-1)!.expected, 1);
 });
 
 test('unknown setup failures provide guidance without claiming a particular condition failed', async () => {

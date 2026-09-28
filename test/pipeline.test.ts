@@ -25,6 +25,35 @@ const hasError = (target: unknown, code: string) =>
   validateTarget(target).some(
     (item) => item.code === code && item.severity === 'error',
   );
+test('schema creation checks exact users once in sorted order, including view-only owners', () => {
+  const source = sourceFixture();
+  const view = ordinaryView('V');
+  view.reference.owner = `View "O'wner`;
+  source.views = [view];
+  source.targetViews = [view.reference];
+  const target = transformSource(
+    source,
+    policySchema.parse({ defaultTablespace: `Data "O'ne` }),
+  );
+  const sql = generateSql(target);
+  assert.deepEqual(
+    [...sql.matchAll(/FROM ALL_USERS WHERE USERNAME = (.*);/g)].map(
+      (match) => match[1],
+    ),
+    ["'APP'", "'SHARED'", `'View "O''wner'`],
+  );
+  assert.ok(
+    sql.includes(
+      `EXECUTE IMMEDIATE 'CREATE USER "View ""O''wner" NO AUTHENTICATION DEFAULT TABLESPACE "Data ""O''ne" QUOTA UNLIMITED ON "Data ""O''ne"';`,
+    ),
+  );
+  assert.match(sql, /IF n = 0 THEN/);
+  assert.doesNotMatch(sql, /EXCEPTION|WHENEVER SQLERROR CONTINUE|ALTER USER/);
+  target.tables.reverse();
+  assert.equal(generateSql(target), sql);
+  target.policy.createSchemas = false;
+  assert.doesNotMatch(generateSql(target), /CREATE USER|ALL_USERS/);
+});
 test('one-hop extraction captures parent FK facts but never fetches grandparent table', async () => {
   const fixture = sourceFixture(),
     fetched: string[] = [],

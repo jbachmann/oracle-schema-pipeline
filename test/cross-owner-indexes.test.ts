@@ -43,7 +43,10 @@ test('cross-owner backing indexes preserve identities and provision index-only o
     );
     assert.match(sql, /USING INDEX "Index ""Owner"\."PK_CHILD"/);
     assert.doesNotMatch(sql, /GRANT (?:INDEX|EXECUTE)/);
-    assert.match(setupChecks(target), /username='Index "Owner'/);
+    assert.equal(
+      setupChecks(target).includes(`username='Index "Owner'`),
+      !createSchemas,
+    );
     assert.match(
       verificationChecks(target),
       /index_owner='Index "Owner' AND index_name='PK_CHILD'/,
