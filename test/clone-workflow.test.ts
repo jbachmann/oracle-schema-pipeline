@@ -1,3 +1,7 @@
+import {
+  setupRequirements,
+  setupChecks,
+} from '../scripts/compose-destination.js';
 import * as fs from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -683,4 +687,76 @@ test('retry interruption after reset retains partial destination status and publ
     ).status,
     'failed',
   );
+});
+
+test('setup verification reports each unmet requirement', async () => {
+  const target = transformSource(source, policySchema.parse({}));
+  const requirements = setupRequirements(target);
+  assert.match(setupChecks(target), /OSP_SETUP_CHECK_0/);
+  for (const [index, requirement] of requirements.entries()) {
+    const root = await fixture();
+    const seam = seams();
+    const messages: string[] = [];
+    const result = await cloneDatabase({
+      root,
+      run: seam.run,
+      log: (message) => messages.push(message),
+      destination: () => ({
+        ...seam.destination(),
+        sql: async () => {
+          throw new CloneError('CLONE_STAGE_FAILED', 1, {
+            oracleCodes: ['ORA-20001'],
+            setupCheckIndex: index,
+          });
+        },
+      }),
+    });
+    assert.equal(result.result.errorCode, 'CLONE_PREREQUISITE_FAILED');
+    assert.equal(result.result.lastStage, 'setup-verification');
+    const expected = requirement.detail;
+    assert.equal(result.result.errorDetail, expected);
+    assert.ok(messages.includes(expected));
+    assert.deepEqual(result.result.oracleErrorCodes, ['ORA-20001']);
+    assert.equal(
+      runResultSchema.parse(
+        JSON.parse(
+          await readFile(join(result.directory, 'run-result.json'), 'utf8'),
+        ),
+      ).errorDetail,
+      expected,
+    );
+    assert.ok(requirement.detail.length > 0);
+  }
+});
+
+test('setup requirements explain preprovisioned schemas and external objects', () => {
+  const target = transformSource(
+    source,
+    policySchema.parse({ createSchemas: false }),
+  );
+  target.policy.externalPrerequisites = [
+    { reference: { owner: 'APP', name: 'SEQ' }, type: 'SEQUENCE' },
+  ];
+  const requirements = setupRequirements(target);
+  assert.ok(
+    requirements.some((item) =>
+      /missing.*createSchemas=false/.test(item.detail),
+    ),
+  );
+  assert.match(
+    requirements.at(-1)!.detail,
+    /SEQUENCE "APP"."SEQ".*missing or not VALID/,
+  );
+  assert.match(
+    setupChecks(target),
+    new RegExp(`OSP_SETUP_CHECK_${requirements.length - 1}`),
+  );
+});
+
+test('unknown setup failures provide guidance without claiming a particular condition failed', async () => {
+  const root = await fixture();
+  const seam = seams('sql-1');
+  const { result } = await cloneDatabase({ root, ...seam, log: () => {} });
+  assert.match(result.errorDetail!, /could not complete/);
+  assert.equal(result.oracleErrorCodes, undefined);
 });

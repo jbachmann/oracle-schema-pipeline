@@ -466,6 +466,14 @@ test(
       );
       const missingIndexOwner = await cloneDatabase({ root });
       assert.equal(missingIndexOwner.result.status, 'failed');
+      assert.equal(missingIndexOwner.result.lastStage, 'setup-verification');
+      assert.match(
+        missingIndexOwner.result.errorDetail!,
+        /CLONE_INDEX.*missing.*createSchemas=false/,
+      );
+      assert.ok(
+        missingIndexOwner.result.oracleErrorCodes?.includes('ORA-20001'),
+      );
       await writeFile(
         join(root, 'config/local/setup.sql'),
         'CREATE USER CLONE_FIXTURE NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE USER CLONE_INDEX NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE SEQUENCE CLONE_FIXTURE.EXTERNAL_SEQ;',

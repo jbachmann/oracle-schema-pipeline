@@ -353,3 +353,69 @@ for (const scenario of [
     assert.equal(events.length, count);
   });
 }
+
+for (const exitFailure of [true, false]) {
+  test(`SQL diagnostics retain only codes and setup identity (exit failure: ${exitFailure})`, async () => {
+    const output =
+      'private SQL and password\nORA-20001: OSP_SETUP_CHECK_2\nORA-06512: at line 1\n';
+    const destination = new ComposeDestination(
+      '/repo',
+      {
+        password: 'private-password',
+        port: 1524,
+        startupTimeoutSeconds: 5,
+      },
+      undefined,
+      async (_, __, options) => {
+        for (const line of output.trim().split('\n'))
+          options.onProgressLine?.({ stream: 'stdout', line });
+        if (exitFailure) throw new CloneError('CLONE_STAGE_FAILED', 1);
+        return output;
+      },
+    );
+    await assert.rejects(
+      destination.sql('SELECT 1 FROM dual;'),
+      (error: unknown) => {
+        assert.ok(error instanceof CloneError);
+        assert.deepEqual(error.sqlDiagnostics, {
+          oracleCodes: ['ORA-20001', 'ORA-06512'],
+          setupCheckIndex: 2,
+        });
+        assert.equal(error.childExitCode, exitFailure ? 1 : undefined);
+        assert.doesNotMatch(JSON.stringify(error), /private/);
+        return true;
+      },
+    );
+  });
+}
+
+test('SQL diagnostic parser rejects unknown text and preserves interruption', async () => {
+  for (const code of ['CLONE_STAGE_FAILED', 'CLONE_INTERRUPTED']) {
+    const destination = new ComposeDestination(
+      '/repo',
+      {
+        password: 'secret',
+        port: 1524,
+        startupTimeoutSeconds: 5,
+      },
+      undefined,
+      async (_, __, options) => {
+        options.onProgressLine?.({
+          stream: 'stderr',
+          line: 'secret OSP_SETUP_CHECK_0',
+        });
+        throw new CloneError(code);
+      },
+    );
+    await assert.rejects(
+      destination.sql('SELECT 1 FROM dual;'),
+      (error: unknown) => {
+        assert.ok(error instanceof CloneError);
+        assert.equal(error.code, code);
+        assert.equal(error.sqlDiagnostics?.setupCheckIndex, undefined);
+        assert.doesNotMatch(JSON.stringify(error), /secret/);
+        return true;
+      },
+    );
+  }
+});

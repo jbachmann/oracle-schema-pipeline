@@ -39,37 +39,47 @@ export function sqlSession(sql: string): string {
   return `WHENEVER SQLERROR EXIT 1 ROLLBACK\nWHENEVER OSERROR EXIT 1 ROLLBACK\nSET DEFINE OFF ECHO OFF VERIFY OFF HEADING OFF FEEDBACK OFF PAGESIZE 0 SQLBLANKLINES ON\nALTER SESSION SET CONTAINER=FREEPDB1;\n${sql}\nEXIT SUCCESS\n`;
 }
 const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
-function countCheck(from: string, expected: number): string {
-  return `DECLARE n NUMBER; BEGIN SELECT COUNT(*) INTO n FROM ${from}; IF n != ${expected} THEN RAISE_APPLICATION_ERROR(-20001, 'Clone condition failed'); END IF; END;\n/\n`;
+function countCheck(
+  from: string,
+  expected: number,
+  message = 'Clone condition failed',
+): string {
+  return `DECLARE n NUMBER; BEGIN SELECT COUNT(*) INTO n FROM ${from}; IF n != ${expected} THEN RAISE_APPLICATION_ERROR(-20001, ${literal(message)}); END IF; END;\n/\n`;
+}
+/** Messages come from the target contract, never from SQL client output. */
+export function setupRequirements(target: TargetDocument) {
+  const label = (value: string) => JSON.stringify(value);
+  return [
+    {
+      from: `dba_tablespaces WHERE tablespace_name=${literal(target.policy.defaultTablespace)} AND status='ONLINE'`,
+      expected: 1,
+      detail: `Tablespace ${label(target.policy.defaultTablespace)} is missing or not ONLINE. Create or bring it online in FREEPDB1 using prerequisiteSql, or change defaultTablespace.`,
+    },
+    {
+      from: `v$parameter WHERE name='max_string_size' AND upper(value)=${literal(target.policy.maxStringSize)}`,
+      expected: 1,
+      detail: `MAX_STRING_SIZE does not match ${label(target.policy.maxStringSize)}. Set the policy maxStringSize to match the destination, or configure the destination before replay.`,
+    },
+    ...schemaOwners(target).map((owner) => ({
+      from: `dba_users WHERE username=${literal(owner)}`,
+      expected: target.policy.createSchemas ? 0 : 1,
+      detail: target.policy.createSchemas
+        ? `Schema ${label(owner)} already exists, but createSchemas=true requires it to be absent. Remove its creation from prerequisiteSql, or use createSchemas=false with all required schemas preprovisioned.`
+        : `Schema ${label(owner)} is missing, but createSchemas=false requires it to exist. Create it in FREEPDB1 using prerequisiteSql.`,
+    })),
+    ...target.policy.externalPrerequisites.map((item) => ({
+      from: `dba_objects WHERE owner=${literal(item.reference.owner)} AND object_name=${literal(item.reference.name)} AND object_type=${literal(item.type)} AND status='VALID'`,
+      expected: 1,
+      detail: `External prerequisite ${item.type} ${label(item.reference.owner)}.${label(item.reference.name)} is missing or not VALID. Create or repair it in FREEPDB1 using prerequisiteSql.`,
+    })),
+  ];
 }
 export function setupChecks(target: TargetDocument): string {
-  const owners = schemaOwners(target);
-  return (
-    countCheck(
-      `dba_tablespaces WHERE tablespace_name=${literal(target.policy.defaultTablespace)} AND status='ONLINE'`,
-      1,
-    ) +
-    countCheck(
-      `v$parameter WHERE name='max_string_size' AND upper(value)=${literal(target.policy.maxStringSize)}`,
-      1,
-    ) +
-    owners
-      .map((owner) =>
-        countCheck(
-          `dba_users WHERE username=${literal(owner)}`,
-          target.policy.createSchemas ? 0 : 1,
-        ),
-      )
-      .join('') +
-    target.policy.externalPrerequisites
-      .map((item) =>
-        countCheck(
-          `dba_objects WHERE owner=${literal(item.reference.owner)} AND object_name=${literal(item.reference.name)} AND object_type=${literal(item.type)} AND status='VALID'`,
-          1,
-        ),
-      )
-      .join('')
-  );
+  return setupRequirements(target)
+    .map((item, index) =>
+      countCheck(item.from, item.expected, `OSP_SETUP_CHECK_${index}`),
+    )
+    .join('');
 }
 export function verificationChecks(target: TargetDocument): string {
   return (
@@ -164,7 +174,12 @@ export class ComposeDestination implements Destination {
       },
     );
   }
-  private compose(args: string[], input?: string, timeoutMs?: number) {
+  private compose(
+    args: string[],
+    input?: string,
+    timeoutMs?: number,
+    onProgressLine?: CommandOptions['onProgressLine'],
+  ) {
     return this.docker(
       [
         'compose',
@@ -178,6 +193,7 @@ export class ComposeDestination implements Destination {
       ],
       input,
       timeoutMs,
+      onProgressLine,
     );
   }
   async preflight(observer?: PreflightObserver): Promise<string> {
@@ -336,11 +352,35 @@ export class ComposeDestination implements Destination {
     );
   }
   async sql(sql: string): Promise<void> {
-    const output = await this.compose(
-      ['exec', '-T', service, 'sqlplus', '-s', '/ as sysdba'],
-      sqlSession(sql),
-    );
-    if (/\b(?:ORA-\d{5}|SP2-\d{4})\b/.test(output))
-      throw new CloneError('CLONE_STAGE_FAILED');
+    const diagnostics: { oracleCodes: string[]; setupCheckIndex?: number } = {
+      oracleCodes: [],
+    };
+    const inspect = (line: string) => {
+      for (const code of line.match(/\b(?:ORA-\d{5}|SP2-\d{4})\b/g) ?? []) {
+        if (
+          !diagnostics.oracleCodes.includes(code) &&
+          diagnostics.oracleCodes.length < 20
+        )
+          diagnostics.oracleCodes.push(code);
+      }
+      const check = /^ORA-20001: OSP_SETUP_CHECK_(\d+)\s*$/.exec(line.trim());
+      if (check && diagnostics.setupCheckIndex === undefined)
+        diagnostics.setupCheckIndex = Number(check[1]);
+    };
+    try {
+      const output = await this.compose(
+        ['exec', '-T', service, 'sqlplus', '-s', '/ as sysdba'],
+        sqlSession(sql),
+        undefined,
+        ({ line }) => inspect(line),
+      );
+      output.split(/\r?\n/).forEach(inspect);
+      if (diagnostics.oracleCodes.length)
+        throw new CloneError('CLONE_STAGE_FAILED');
+    } catch (error) {
+      if (error instanceof CloneError && error.code === 'CLONE_STAGE_FAILED')
+        throw new CloneError(error.code, error.childExitCode, diagnostics);
+      throw error;
+    }
   }
 }

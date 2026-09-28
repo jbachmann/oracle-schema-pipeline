@@ -17,6 +17,7 @@ import {
   ComposeDestination,
   generatedReplay,
   setupChecks,
+  setupRequirements,
   verificationChecks,
   type Destination,
 } from './compose-destination.js';
@@ -37,6 +38,10 @@ export const runResultSchema = z
     lastStage: z.string(),
     destinationResetStarted: z.boolean(),
     errorCode: z.string().optional(),
+    errorDetail: z.string().optional(),
+    oracleErrorCodes: z
+      .array(z.string().regex(/^(?:ORA-\d{5}|SP2-\d{4})$/))
+      .optional(),
     childExitCode: z.number().int().optional(),
     prerequisite: z
       .object({
@@ -89,6 +94,7 @@ async function runCloneAttempt(
   const lock = options.lockPath ?? cloneLockPath;
   const runId = randomUUID();
   let owned = false;
+  let setupDetails: string[] = [];
   const result: RunResult = {
     version: 1,
     runId,
@@ -126,6 +132,7 @@ async function runCloneAttempt(
       throw new CloneError(
         code,
         error instanceof CloneError ? error.childExitCode : undefined,
+        error instanceof CloneError ? error.sqlDiagnostics : undefined,
       );
     }
   }
@@ -318,6 +325,7 @@ async function runCloneAttempt(
       await stage('prerequisite', 'CLONE_PREREQUISITE_FAILED', () =>
         destination.sql(prerequisite.toString('utf8')),
       );
+    setupDetails = setupRequirements(target).map((item) => item.detail);
     await stage('setup-verification', 'CLONE_PREREQUISITE_FAILED', () =>
       destination.sql(setupChecks(target)),
     );
@@ -338,6 +346,29 @@ async function runCloneAttempt(
       error instanceof CloneError || error instanceof OutputError
         ? error.code
         : 'CLONE_STAGE_FAILED';
+    if (error instanceof CloneError && error.sqlDiagnostics?.oracleCodes.length)
+      result.oracleErrorCodes = error.sqlDiagnostics.oracleCodes;
+    if (
+      result.lastStage === 'setup-verification' &&
+      result.errorCode === 'CLONE_PREREQUISITE_FAILED'
+    ) {
+      const index =
+        error instanceof CloneError
+          ? error.sqlDiagnostics?.setupCheckIndex
+          : undefined;
+      result.errorDetail =
+        (index === undefined ? undefined : setupDetails[index]) ??
+        'Setup verification could not complete. Check destination SQL connectivity and the reported Oracle codes; required tablespace, MAX_STRING_SIZE, schemas, and external prerequisites must match target.json policy in FREEPDB1.';
+    } else if (
+      result.lastStage === 'prerequisite' &&
+      result.errorCode === 'CLONE_PREREQUISITE_FAILED'
+    ) {
+      result.errorDetail =
+        'prerequisiteSql failed before setup verification. Check the reported Oracle codes and correct the prerequisite SQL for FREEPDB1.';
+    }
+    if (result.errorDetail) log(result.errorDetail);
+    if (result.oracleErrorCodes)
+      log(`Oracle errors: ${result.oracleErrorCodes.join(', ')}`);
     if (error instanceof CloneError && error.childExitCode !== undefined)
       result.childExitCode = error.childExitCode;
   } finally {

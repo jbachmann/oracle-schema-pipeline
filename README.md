@@ -562,7 +562,8 @@ text and raw errors are excluded from progress output.
 Only after all artifacts and preflight checks succeed does the command remove the
 old container and volume, including a stopped destination, then start a fresh
 Oracle database. Optional trusted prerequisite SQL executes once before replay.
-Missing required setup fails before reset. Generation creates schema owners with
+Missing required setup configuration fails before reset. Destination setup
+verification runs after startup and prerequisite SQL, before replay. Generation creates schema owners with
 `NO AUTHENTICATION`; these are not login accounts. Inspect using a privileged local
 account and the configured destination bootstrap password.
 
@@ -573,6 +574,16 @@ publication succeeds. Failed runs may contain a subset. Results record stage,
 reset status, timestamps, error code, image ID and optional setup hash/length.
 They exclude credentials, DSNs, raw subprocess errors and setup SQL. No prior
 artifact is overwritten. Review `report.json` for pipeline diagnostics.
+
+For `CLONE_PREREQUISITE_FAILED`, check `lastStage` in `run-result.json`.
+`prerequisite` means the configured SQL failed; `setup-verification` means the
+required destination state could not be verified. The console and result now
+include `errorDetail` with the unmet requirement and repair guidance when a setup
+check fails, plus `oracleErrorCodes` when available. Checks require an online
+`defaultTablespace`, matching `maxStringSize`, absent schema owners when
+`createSchemas=true` (present when false), and valid `externalPrerequisites` in
+`FREEPDB1`. Raw SQL client output is not retained.
+
 
 Success requires modeled objects to exist and be valid; this is bounded checking,
 not complete semantic equivalence. The destination stays running. After reset,

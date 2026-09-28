@@ -5,6 +5,10 @@ export class CloneError extends Error {
   constructor(
     public readonly code: string,
     public readonly childExitCode?: number,
+    public readonly sqlDiagnostics?: {
+      oracleCodes: string[];
+      setupCheckIndex?: number;
+    },
   ) {
     super(code);
   }
