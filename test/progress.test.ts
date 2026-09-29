@@ -161,6 +161,7 @@ test('opt-in events preserve metadata, report ordered query timing and row count
       'column-comments',
       'identities',
       'prerequisites',
+      'table-dependencies',
       'indexes',
       'index-expressions',
       'index-columns',

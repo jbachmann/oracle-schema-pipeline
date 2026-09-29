@@ -19,10 +19,21 @@ import {
   type ViewDefinition,
   type ObjectSelection,
   sourceDocumentSchema,
+  selectionSchema,
+  type ProgramUnit,
+  type SequenceDefinition,
+  type SynonymDefinition,
+  type NormalizedSelection,
 } from './model.js';
 
-/** Read-only catalog metadata used to extract tables and optional views. */
+/** Read-only relational catalog plus optional explicit program/supporting-object capabilities. */
 export interface SourceCatalog {
+  programUnits?(selection: NormalizedSelection): Promise<ProgramUnit[]>;
+  sequences?(references: ObjectReference[]): Promise<SequenceDefinition[]>;
+  synonyms?(references: ObjectReference[]): Promise<SynonymDefinition[]>;
+  synonymResolution?(
+    reference: ObjectReference,
+  ): Promise<NonNullable<Prerequisite['synonymResolution']>>;
   prefetchForeignKeys?(references: ObjectReference[]): Promise<void>;
   prefetchTables?(references: ObjectReference[]): Promise<void>;
   prefetchViews?(references: ObjectReference[]): Promise<void>;
@@ -48,15 +59,61 @@ export async function extractSource(
   progress = new ExtractionProgress(),
 ): Promise<SourceDocument> {
   return progress.measure('extract', () =>
-    extract(catalog, selection, progress),
+    extract(catalog, selectionSchema.parse(selection), progress),
   );
 }
 
 async function extract(
   catalog: SourceCatalog,
-  selection: ObjectSelection,
+  selection: NormalizedSelection,
   progress: ExtractionProgress,
 ): Promise<SourceDocument> {
+  const canonicalRoutines = (roots: NormalizedSelection['procedures']) =>
+    [
+      ...new Map(
+        roots.map((root) => [
+          JSON.stringify([
+            root.owner,
+            'package' in root ? root.package : null,
+            root.name,
+          ]),
+          root,
+        ]),
+      ).entries(),
+    ]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([, root]) => root);
+  selection = {
+    ...selection,
+    procedures: canonicalRoutines(selection.procedures),
+    functions: canonicalRoutines(selection.functions),
+    packages: uniqueReferences(selection.packages),
+    sequences: uniqueReferences(selection.sequences),
+    synonyms: uniqueReferences(selection.synonyms),
+  };
+  if (
+    (selection.procedures.length ||
+      selection.functions.length ||
+      selection.packages.length) &&
+    !catalog.programUnits
+  )
+    throw new Error('Catalog does not support selected programs.');
+  if (selection.sequences.length && !catalog.sequences)
+    throw new Error('Catalog does not support selected sequences.');
+  if (selection.synonyms.length && !catalog.synonyms)
+    throw new Error('Catalog does not support selected synonyms.');
+  const programUnits =
+    selection.procedures.length ||
+    selection.functions.length ||
+    selection.packages.length
+      ? await catalog.programUnits!(selection)
+      : [];
+  const sequences = selection.sequences.length
+    ? await catalog.sequences!(selection.sequences)
+    : [];
+  const synonyms = selection.synonyms.length
+    ? await catalog.synonyms!(selection.synonyms)
+    : [];
   const targetTables = uniqueReferences(selection.tables);
   const targetViews = uniqueReferences(selection.views);
   const targetTableKeys = new Set(targetTables.map(objectKey));
@@ -106,10 +163,65 @@ async function extract(
     prerequisites.push(...(await catalog.prerequisites(reference)));
   }
 
+  const included = new Set(
+    [...tables, ...views, ...programUnits, ...sequences, ...synonyms].map(
+      (item) => objectKey(item.reference),
+    ),
+  );
+  for (const unit of programUnits)
+    for (const edge of unit.dependencies) {
+      if (!edge.oracleMaintained && !included.has(objectKey(edge.reference)))
+        prerequisites.push({
+          requiredBy: unit.reference,
+          reference: edge.reference,
+          type: edge.type,
+          databaseLink: edge.databaseLink,
+          synonymResolution: null,
+        });
+    }
+  for (const view of views)
+    for (const edge of view.dependencies)
+      if (
+        !['TABLE', 'VIEW'].includes(edge.type) &&
+        !included.has(objectKey(edge.reference))
+      )
+        prerequisites.push({
+          ...edge,
+          requiredBy: view.reference,
+          synonymResolution: null,
+        });
+  for (const synonym of synonyms)
+    if (!included.has(objectKey(synonym.target)))
+      prerequisites.push({
+        requiredBy: synonym.reference,
+        reference: synonym.target,
+        type: synonym.targetType,
+        databaseLink: synonym.databaseLink,
+        synonymResolution: null,
+      });
+  for (const prerequisite of prerequisites)
+    if (prerequisite.type === 'SYNONYM') {
+      if (!catalog.synonymResolution)
+        throw new Error(
+          'Catalog does not support external synonym resolution.',
+        );
+      prerequisite.synonymResolution = await catalog.synonymResolution(
+        prerequisite.reference,
+      );
+    }
+
   // Check the assembled document's shape at the stage boundary. Semantic checks
   // against target policy belong to downstream validation.
   return sourceDocumentSchema.parse({
-    formatVersion: 5,
+    formatVersion: 6,
+    targetProcedures: selection.procedures,
+    targetFunctions: selection.functions,
+    targetPackages: selection.packages,
+    targetSequences: selection.sequences,
+    targetSynonyms: selection.synonyms,
+    programUnits,
+    sequences,
+    synonyms,
     kind: 'source',
     dialect: 'oracle',
     sourceVersion: await catalog.databaseVersion(),
@@ -187,7 +299,7 @@ async function extractViews(
       }
       if (edge.type === 'VIEW') {
         pendingViews.push(edge.reference);
-      } else {
+      } else if (edge.type === 'TABLE') {
         viewTableReferences.push(edge.reference);
       }
     }

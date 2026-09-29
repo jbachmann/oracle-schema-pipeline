@@ -78,7 +78,11 @@ function functionFixture() {
     ],
     dependencies: [dependency, dependency],
   });
-  source.prerequisites.push({ ...dependency, requiredBy: table.reference });
+  source.prerequisites.push({
+    ...dependency,
+    requiredBy: table.reference,
+    synonymResolution: null,
+  });
   return transformSource(
     source,
     policySchema.parse({
@@ -153,7 +157,7 @@ test('missing or unsupported dependency metadata and unacknowledged edges fail c
   assert.throws(() => targetDocumentSchema.parse(missing), /dependencies/);
   assert.throws(
     () => sourceDocumentSchema.parse({ ...sourceFixture(), formatVersion: 4 }),
-    /format v5; re-extract/,
+    /format v6; re-extract/,
   );
 });
 test('cross-owner support retains independent index and backing-reference rejection', () => {

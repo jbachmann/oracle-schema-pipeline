@@ -10,6 +10,64 @@ import {
   generatedReplay,
 } from '../scripts/compose-destination.js';
 import { CloneError, type Runner } from '../scripts/process.js';
+import {
+  verificationChecks,
+  setupRequirements,
+} from '../scripts/compose-destination.js';
+import { programTarget, sequence } from './program-fixtures.js';
+test('destination verification checks sequences and exact alias targets without consuming state', () => {
+  const target = programTarget();
+  target.sequences = [sequence()];
+  target.targetSequences = [sequence().reference];
+  target.synonyms = [
+    {
+      reference: { owner: 'APP', name: 'ALIAS' },
+      target: sequence().reference,
+      targetType: 'SEQUENCE',
+      databaseLink: null,
+      editionable: true,
+      editionName: null,
+      sharing: 'NONE',
+      unsupportedFeatures: [],
+    },
+  ];
+  target.targetSynonyms = [target.synonyms[0].reference];
+  const checks = verificationChecks(target);
+  assert.match(checks, /dba_sequences/);
+  assert.match(checks, /table_owner='APP' AND table_name='S'/);
+  assert.match(checks, /all_errors/);
+  assert.doesNotMatch(checks, /NEXTVAL|CURRVAL|last_number/i);
+  target.policy.createSchemas = false;
+  assert.ok(
+    setupRequirements(target).some((item) =>
+      item.from.includes("username='APP'"),
+    ),
+  );
+  target.prerequisites = [
+    {
+      requiredBy: target.programUnits[0].reference,
+      reference: target.synonyms[0].reference,
+      type: 'SYNONYM',
+      databaseLink: null,
+      synonymResolution: {
+        links: [
+          {
+            reference: target.synonyms[0].reference,
+            target: sequence().reference,
+            databaseLink: null,
+          },
+        ],
+        terminal: { reference: sequence().reference, type: 'SEQUENCE' },
+      },
+    },
+  ];
+  assert.ok(
+    !setupRequirements(target).some((item) =>
+      item.from.includes('dba_synonyms'),
+    ),
+  );
+  assert.match(verificationChecks(target), /dba_synonyms/);
+});
 test('only local socket Docker endpoints are accepted', () => {
   assertLocalEndpoint('unix:///tmp/docker.sock');
   for (const endpoint of [
@@ -101,12 +159,12 @@ test('conflicting container identity and failed volume removal fail closed', asy
 test('generated preamble cannot override replay error handling; body remains byte-for-byte', () => {
   const prefix =
     [
-      '-- Generated from oracle-schema-pipeline format 5. No source DDL was replayed.',
+      '-- Generated from oracle-schema-pipeline format 6. Catalog definitions and selected PL/SQL source.',
       'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
       'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
       'SET DEFINE OFF',
       'SET SQLBLANKLINES ON',
-      'SET ECHO ON',
+      'SET ECHO OFF',
     ].join('\n\n') + '\n\n';
   const body = "CREATE TABLE T (V VARCHAR2(10) DEFAULT '  a  ');\n";
   assert.equal(generatedReplay(prefix + body), 'SET SQLBLANKLINES ON\n' + body);

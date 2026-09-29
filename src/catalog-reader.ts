@@ -15,6 +15,15 @@ import { memberRowSchema } from './catalog-schemas.js';
 
 export type CatalogScope = 'all' | 'dba';
 const catalogViews = {
+  sequences: { all: 'all_sequences', dba: 'dba_sequences' },
+  synonyms: { all: 'all_synonyms', dba: 'dba_synonyms' },
+  source: { all: 'all_source', dba: 'dba_source' },
+  procedures: { all: 'all_procedures', dba: 'dba_procedures' },
+  arguments: { all: 'all_arguments', dba: 'dba_arguments' },
+  settings: {
+    all: 'all_plsql_object_settings',
+    dba: 'dba_plsql_object_settings',
+  },
   constraints: { all: 'all_constraints', dba: 'dba_constraints' },
   consColumns: { all: 'all_cons_columns', dba: 'dba_cons_columns' },
   tables: { all: 'all_tables', dba: 'dba_tables' },
@@ -78,6 +87,10 @@ export class CatalogReader {
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 128) {
       throw new Error('Catalog batch size must be an integer from 1 to 128.');
     }
+  }
+
+  get isDba(): boolean {
+    return this.scope === 'dba';
   }
 
   catalogView(name: CatalogView): string {

@@ -18,6 +18,17 @@ import {
 
 export function catalogQueries(reader: CatalogReader) {
   return {
+    'table-dependencies': {
+      category: 'table-dependencies',
+      schema: dependencyRowSchema,
+      bindNames: ['owner', 'tableName'],
+      sql: `SELECT DISTINCT d.referenced_owner, d.referenced_name, d.referenced_type, d.referenced_link_name
+        FROM ${reader.catalogView('dependencies')} d /* selection */
+        WHERE d.owner=:owner AND d.name=:tableName AND d.type='TABLE'
+          AND NOT EXISTS (SELECT 1 FROM ${reader.catalogView('users')} u WHERE u.username=d.referenced_owner AND u.oracle_maintained='Y')
+          AND NOT EXISTS (SELECT 1 FROM ${reader.catalogView('tabIdentityCols')} c WHERE c.owner=d.referenced_owner AND c.sequence_name=d.referenced_name AND d.referenced_type='SEQUENCE')
+        ORDER BY d.referenced_owner,d.referenced_name,d.referenced_type`,
+    },
     prerequisites: {
       category: 'prerequisites',
       schema: dependencyRowSchema,

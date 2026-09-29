@@ -1,4 +1,4 @@
--- Generated from oracle-schema-pipeline format 5. No source DDL was replayed.
+-- Generated from oracle-schema-pipeline format 6. Catalog definitions and selected PL/SQL source.
 
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
 
@@ -8,7 +8,7 @@ SET DEFINE OFF
 
 SET SQLBLANKLINES ON
 
-SET ECHO ON
+SET ECHO OFF
 
 ALTER SESSION SET DEFERRED_SEGMENT_CREATION=TRUE;
 
@@ -32,8 +32,6 @@ BEGIN
 END;
 /
 
--- Phase 1: all tables, without foreign keys.
-
 CREATE TABLE "APP"."CHILD" (
   "TENANT_ID" NUMBER(10,0),
   "ID" NUMBER(10,0)
@@ -43,8 +41,6 @@ CREATE TABLE "SHARED"."PARENT" (
   "TENANT_ID" NUMBER(10,0),
   "ID" NUMBER(10,0)
 ) SEGMENT CREATION DEFERRED;
-
--- Phase 2: table and column comments.
 
 BEGIN
   EXECUTE IMMEDIATE
@@ -56,26 +52,16 @@ END;
 
 COMMENT ON COLUMN "APP"."CHILD"."TENANT_ID" IS 'Tenant identifier';
 
--- Phase 3: standalone and constraint-supporting indexes, exactly once.
-
 CREATE UNIQUE INDEX "APP"."PK_CHILD" ON "APP"."CHILD" ("TENANT_ID" ASC, "ID" ASC);
 
 CREATE UNIQUE INDEX "SHARED"."PK_PARENT" ON "SHARED"."PARENT" ("TENANT_ID" ASC, "ID" ASC);
-
--- Phase 4: local constraints and candidate keys, reusing existing indexes.
 
 ALTER TABLE "APP"."CHILD" ADD CONSTRAINT "PK_CHILD" PRIMARY KEY ("TENANT_ID", "ID") NOT DEFERRABLE USING INDEX "APP"."PK_CHILD" ENABLE VALIDATE;
 
 ALTER TABLE "SHARED"."PARENT" ADD CONSTRAINT "PK_PARENT" PRIMARY KEY ("TENANT_ID", "ID") NOT DEFERRABLE USING INDEX "SHARED"."PK_PARENT" ENABLE VALIDATE;
 
--- Phase 5: cross-schema REFERENCES grants.
-
 GRANT REFERENCES ON "SHARED"."PARENT" TO "APP";
 
--- Phase 6: selected target-origin foreign keys only.
-
 ALTER TABLE "APP"."CHILD" ADD CONSTRAINT "FK_CHILD_PARENT" FOREIGN KEY ("TENANT_ID", "ID") REFERENCES "SHARED"."PARENT" ("TENANT_ID", "ID") NOT DEFERRABLE ENABLE VALIDATE;
-
--- Phase 7: conventional views.
 
 PROMPT Schema reconstruction completed.

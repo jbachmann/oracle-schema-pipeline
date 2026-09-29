@@ -9,6 +9,17 @@ import { randomUUID } from 'node:crypto';
 import type { ObjectReference } from './model.js';
 
 export type QueryCategory =
+  | 'program-objects'
+  | 'program-source'
+  | 'program-members'
+  | 'program-arguments'
+  | 'program-settings'
+  | 'program-dependencies'
+  | 'catalog-capabilities'
+  | 'sequences'
+  | 'synonyms'
+  | 'synonym-target'
+  | 'table-dependencies'
   | 'database-version'
   | 'constraints'
   | 'constraint-columns'
@@ -58,6 +69,10 @@ export function progressErrorCode(error: unknown): string {
 
   const code = error.code;
   switch (code) {
+    case 'PACKAGE_BODY_VISIBILITY':
+    case 'PROCEDURE_SELECTION_NOT_FOUND':
+    case 'FUNCTION_SELECTION_NOT_FOUND':
+    case 'PACKAGE_SELECTION_NOT_FOUND':
     case 'CATALOG_UNKNOWN_VALUE':
     case 'CATALOG_CARDINALITY':
     case 'CATALOG_INCOMPLETE_METADATA':

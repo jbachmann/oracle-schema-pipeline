@@ -1,3 +1,8 @@
+import { validatePrograms } from './programs.js';
+import { validateSequences } from './sequences.js';
+import { validateProviders, resolveProvider } from './providers.js';
+import { objectGrants } from './object-grants.js';
+import { operationOrder } from './operation-order.js';
 /**
  * Semantic analysis checks the meaning and relationships of parsed metadata.
  * The schemas in model.ts check document shape; this module checks whether
@@ -138,6 +143,20 @@ export function analyzeTarget(document: TargetDocument) {
         } else if (edge.type === 'VIEW') {
           dependencies.add(dependency);
         }
+      } else if (['FUNCTION', 'PACKAGE', 'SYNONYM'].includes(edge.type)) {
+        const resolution = resolveProvider(document, edge);
+        if (
+          resolution.error ||
+          !resolution.provider ||
+          !['TABLE', 'VIEW', 'FUNCTION', 'PACKAGE'].includes(
+            resolution.provider.type,
+          )
+        )
+          error(
+            resolution.error ?? 'UNSUPPORTED_VIEW_DEPENDENCY',
+            viewName,
+            'View dependency has no supported provider.',
+          );
       } else {
         error(
           'UNSUPPORTED_VIEW_DEPENDENCY',
@@ -162,7 +181,16 @@ export function analyzeTarget(document: TargetDocument) {
       'View dependency graph contains a cycle.',
     );
   }
+  const ordering = operationOrder(document);
+  diagnostics.push(
+    ...validatePrograms(document),
+    ...validateSequences(document),
+    ...validateProviders(document),
+    ...objectGrants(document).diagnostics,
+    ...ordering.diagnostics,
+  );
   return {
+    orderedOperations: ordering.operations,
     tablesByKey,
     viewsByKey,
     expectedTables,

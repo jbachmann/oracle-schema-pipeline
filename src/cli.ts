@@ -49,7 +49,15 @@ async function readValidatedJson<T>(
   }
   const result = schema.safeParse(input);
   if (!result.success) {
-    const issues = result.error.issues
+    const flatten = (
+      issues: typeof result.error.issues,
+    ): typeof result.error.issues =>
+      issues.flatMap((issue) =>
+        issue.code === 'invalid_union'
+          ? issue.unionErrors.flatMap((error) => flatten(error.issues))
+          : [issue],
+      );
+    const issues = flatten(result.error.issues)
       .map((issue) => `  ${issue.path.join('.') || '<root>'}: ${issue.message}`)
       .join('\n');
     throw new Error(

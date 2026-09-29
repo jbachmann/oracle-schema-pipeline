@@ -1,5 +1,5 @@
 {
-  "formatVersion": 5,
+  "formatVersion": 6,
   "dialect": "oracle",
   "sourceVersion": "19.0.0.0.0",
   "extractedAt": "2026-09-22T00:00:00.000Z",
@@ -10,6 +10,14 @@
     }
   ],
   "targetViews": [],
+  "targetProcedures": [],
+  "targetFunctions": [],
+  "targetPackages": [],
+  "targetSequences": [],
+  "targetSynonyms": [],
+  "programUnits": [],
+  "sequences": [],
+  "synonyms": [],
   "tables": [
     {
       "reference": {
@@ -17,7 +25,7 @@
         "name": "CHILD"
       },
       "role": "target",
-      "comment": "Synthetic child table's comment & \u03a9",
+      "comment": "Synthetic child table's comment & Ω",
       "unsupportedFeatures": [],
       "sourcePhysical": {
         "tablespace": "PROD_DATA",
@@ -146,7 +154,8 @@
           ],
           "dependencies": []
         }
-      ]
+      ],
+      "dependencies": []
     },
     {
       "reference": {
@@ -252,7 +261,8 @@
           ],
           "dependencies": []
         }
-      ]
+      ],
+      "dependencies": []
     }
   ],
   "views": [],
@@ -280,10 +290,12 @@
   "kind": "target",
   "targetVersion": "23",
   "policy": {
-    "version": 1,
+    "version": 2,
     "createSchemas": true,
     "defaultTablespace": "USERS",
     "maxStringSize": "STANDARD",
-    "externalPrerequisites": []
+    "externalPrerequisites": [],
+    "objectGrants": [],
+    "sequenceStarts": []
   }
 }

@@ -374,26 +374,6 @@ function validatePrerequisites(
   document: TargetDocument,
   error: ReportError,
 ): void {
-  for (const prerequisite of document.prerequisites) {
-    const allowed = document.policy.externalPrerequisites.some(
-      (item) =>
-        item.type === prerequisite.type &&
-        objectKey(item.reference) === objectKey(prerequisite.reference),
-    );
-    if (prerequisite.databaseLink) {
-      error(
-        'REMOTE_PREREQUISITE',
-        qualifiedName(prerequisite.requiredBy),
-        'Remote dependencies are unsupported.',
-      );
-    } else if (!allowed) {
-      error(
-        'UNACKNOWLEDGED_PREREQUISITE',
-        qualifiedName(prerequisite.requiredBy),
-        `Provision and acknowledge ${prerequisite.type} ${qualifiedName(prerequisite.reference)} in the target policy.`,
-      );
-    }
-  }
   if (
     document.policy.createSchemas &&
     document.policy.externalPrerequisites.length

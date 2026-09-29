@@ -1,3 +1,4 @@
+import { providerIndex } from './providers.js';
 import {
   objectKey,
   qualifiedName,
@@ -70,14 +71,16 @@ export function indexRequirements(document: TargetDocument): {
         const matches = (item: { reference: ObjectReference; type: string }) =>
           item.type === edge.type &&
           objectKey(item.reference) === objectKey(edge.reference);
+        const internal = providerIndex(document).get(objectKey(edge.reference));
         if (
-          !document.prerequisites.some(
+          !(internal && !internal.external && internal.type === edge.type) &&
+          (!document.prerequisites.some(
             (item) =>
               matches(item) &&
               item.databaseLink === null &&
               objectKey(item.requiredBy) === objectKey(table.reference),
           ) ||
-          !document.policy.externalPrerequisites.some(matches)
+            !document.policy.externalPrerequisites.some(matches))
         ) {
           error(
             'UNACKNOWLEDGED_PREREQUISITE',

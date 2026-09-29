@@ -1,3 +1,7 @@
+import { readPrograms } from './catalog-programs.js';
+import { readSequences } from './catalog-sequences.js';
+import { readSynonyms, readSynonymResolution } from './catalog-synonyms.js';
+import type { NormalizedSelection } from './model.js';
 /**
  * Adapts Oracle's read-only catalog metadata to the SourceCatalog interface used
  * by extraction. Each adapter shares one query reader and one constraint cache
@@ -54,6 +58,19 @@ export class OracleCatalog implements SourceCatalog {
     this.constraints = new ConstraintReader(this.reader);
   }
 
+  programUnits(selection: NormalizedSelection) {
+    return readPrograms(this.reader, selection);
+  }
+  sequences(references: ObjectReference[]) {
+    return readSequences(this.reader, references);
+  }
+  synonyms(references: ObjectReference[]) {
+    return readSynonyms(this.reader, references);
+  }
+  synonymResolution(reference: ObjectReference) {
+    return readSynonymResolution(this.reader, reference);
+  }
+
   async foreignKeys(table: ObjectReference): Promise<ForeignKeyDefinition[]> {
     return this.constraints.foreignKeys(table);
   }
@@ -87,6 +104,7 @@ export class OracleCatalog implements SourceCatalog {
             'column-comments',
             'identities',
             'prerequisites',
+            'table-dependencies',
           ] as const) {
             const query: CatalogQuery = queries[category];
             await this.reader.prefetch(query, requests);
@@ -259,6 +277,7 @@ export class OracleCatalog implements SourceCatalog {
     );
     return rows.map((row) => ({
       requiredBy: table,
+      synonymResolution: null,
       reference: {
         owner: row.REFERENCED_OWNER ?? 'PUBLIC',
         name: row.REFERENCED_NAME,

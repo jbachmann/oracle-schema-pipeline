@@ -297,6 +297,7 @@ test('unsupported identity, specialized tables and internal index expressions bl
 test('external prerequisites must be acknowledged and schemas preprovisioned', () => {
   const source = sourceFixture();
   source.prerequisites.push({
+    synonymResolution: null,
     requiredBy: source.tables[0].reference,
     reference: { owner: 'APP', name: 'NEXT_VALUE' },
     type: 'SEQUENCE',

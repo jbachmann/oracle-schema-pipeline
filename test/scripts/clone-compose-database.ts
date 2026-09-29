@@ -220,7 +220,16 @@ async function main(): Promise<void> {
   const replay = `WHENEVER SQLERROR EXIT 1\nWHENEVER OSERROR EXIT FAILURE\nALTER SESSION SET CONTAINER=FREEPDB1;\n${generatedSql}\nEXIT SUCCESS\n`;
   console.log('Loading generated SQL into destination...');
   await compose(
-    ['exec', '-T', 'oracle-destination', 'sqlplus', '-s', '/ as sysdba'],
+    [
+      'exec',
+      '-T',
+      '-e',
+      'NLS_LANG=.AL32UTF8',
+      'oracle-destination',
+      'sqlplus',
+      '-s',
+      '/ as sysdba',
+    ],
     replay,
   );
   console.log(

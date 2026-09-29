@@ -89,6 +89,16 @@ export async function readTable(
     columns,
     constraints,
     indexes: await readIndexes(reader, reference),
+    dependencies: (
+      await reader.read(catalogQueries(reader)['table-dependencies'], binds)
+    ).map((row) => ({
+      reference: {
+        owner: row.REFERENCED_OWNER ?? 'PUBLIC',
+        name: row.REFERENCED_NAME,
+      },
+      type: row.REFERENCED_TYPE,
+      databaseLink: row.REFERENCED_LINK_NAME,
+    })),
   };
 }
 

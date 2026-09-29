@@ -1,3 +1,6 @@
+import { objectAssertions } from '../src/object-assertions.js';
+import { providerIndex } from '../src/providers.js';
+import { objectKey } from '../src/model.js';
 import { schemaOwners } from '../src/schema-owners.js';
 import { indexRequirements } from '../src/index-grants.js';
 import { join } from 'node:path';
@@ -25,12 +28,12 @@ export function assertLocalEndpoint(endpoint: string): void {
 export function generatedReplay(sql: string): string {
   const prefix =
     [
-      '-- Generated from oracle-schema-pipeline format 5. No source DDL was replayed.',
+      '-- Generated from oracle-schema-pipeline format 6. Catalog definitions and selected PL/SQL source.',
       'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
       'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
       'SET DEFINE OFF',
       'SET SQLBLANKLINES ON',
-      'SET ECHO ON',
+      'SET ECHO OFF',
     ].join('\n\n') + '\n\n';
   if (!sql.startsWith(prefix)) throw new CloneError('CLONE_STAGE_FAILED');
   return 'SET SQLBLANKLINES ON\n' + sql.slice(prefix.length);
@@ -49,6 +52,7 @@ function countCheck(
 /** Messages come from the target contract, never from SQL client output. */
 export function setupRequirements(target: TargetDocument) {
   const label = (value: string) => JSON.stringify(value);
+  const providers = providerIndex(target);
   return [
     {
       from: `dba_tablespaces WHERE tablespace_name=${literal(target.policy.defaultTablespace)} AND status='ONLINE'`,
@@ -67,6 +71,33 @@ export function setupRequirements(target: TargetDocument) {
         detail: `Schema ${label(owner)} is missing, but createSchemas=false requires it to exist. Create it in FREEPDB1 using prerequisiteSql.`,
       }),
     ),
+    ...target.prerequisites.flatMap((item) =>
+      item.synonymResolution
+        ? [
+            ...item.synonymResolution.links
+              .filter(
+                (link) => providers.get(objectKey(link.reference))?.external,
+              )
+              .map((link) => ({
+                from: `dba_synonyms WHERE owner=${literal(link.reference.owner)} AND synonym_name=${literal(link.reference.name)} AND table_owner=${literal(link.target.owner)} AND table_name=${literal(link.target.name)} AND db_link IS NULL`,
+                expected: 1,
+                detail:
+                  'External synonym mapping does not match captured resolution.',
+              })),
+            ...(providers.get(
+              objectKey(item.synonymResolution.terminal.reference),
+            )?.external
+              ? [
+                  {
+                    from: `dba_objects WHERE owner=${literal(item.synonymResolution.terminal.reference.owner)} AND object_name=${literal(item.synonymResolution.terminal.reference.name)} AND object_type=${literal(item.synonymResolution.terminal.type)} AND status='VALID'`,
+                    expected: 1,
+                    detail: 'External synonym terminal is missing or invalid.',
+                  },
+                ]
+              : []),
+          ]
+        : [],
+    ),
     ...target.policy.externalPrerequisites.map((item) => ({
       from: `dba_objects WHERE owner=${literal(item.reference.owner)} AND object_name=${literal(item.reference.name)} AND object_type=${literal(item.type)} AND status='VALID'`,
       expected: 1,
@@ -83,6 +114,8 @@ export function setupChecks(target: TargetDocument): string {
 }
 export function verificationChecks(target: TargetDocument): string {
   return (
+    objectAssertions(target, 'dba').join('\n') +
+    '\n' +
     [
       ...target.tables.map((object) => ({
         ...object.reference,
@@ -369,7 +402,16 @@ export class ComposeDestination implements Destination {
     };
     try {
       const output = await this.compose(
-        ['exec', '-T', service, 'sqlplus', '-s', '/ as sysdba'],
+        [
+          'exec',
+          '-T',
+          '-e',
+          'NLS_LANG=.AL32UTF8',
+          service,
+          'sqlplus',
+          '-s',
+          '/ as sysdba',
+        ],
         sqlSession(sql),
         undefined,
         ({ line }) => inspect(line),

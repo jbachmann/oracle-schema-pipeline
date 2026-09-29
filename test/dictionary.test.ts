@@ -7,6 +7,28 @@ import {
   dictionarySheetOrder,
 } from '../src/dictionary.js';
 import { enabledState, sourceFixture } from './fixtures.js';
+import { program, sequence } from './program-fixtures.js';
+
+test('program-only dictionary reports new counts without truncating source into cells', () => {
+  const source = sourceFixture();
+  source.tables = [];
+  source.targetTables = [];
+  source.programUnits = [program()];
+  source.targetProcedures = [source.programUnits[0].reference];
+  source.sequences = [sequence()];
+  source.targetSequences = [sequence().reference];
+  const workbook = buildDictionaryWorkbook(source);
+  const metadata = workbook.getWorksheet('Metadata')!;
+  const values = new Map<string, unknown>();
+  metadata.eachRow((row) =>
+    values.set(String(row.getCell(1).value), row.getCell(2).value),
+  );
+  assert.equal(values.get('Program unit count'), 1);
+  assert.equal(values.get('Sequence count'), 1);
+  assert.equal(values.get('Included table count'), 0);
+  assert.equal(workbook.getWorksheet('Tables')!.rowCount, 1);
+  assert.ok(!JSON.stringify(metadata.model).includes('BEGIN NULL'));
+});
 
 test('dictionary has fixed sheets, formatting, stable rows, and exact comments', async () => {
   const source = sourceFixture();

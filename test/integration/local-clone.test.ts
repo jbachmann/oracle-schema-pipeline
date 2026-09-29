@@ -297,11 +297,16 @@ test(
       ],
       {
         env: childEnvironment(),
-        input: `WHENEVER SQLERROR EXIT 1\nALTER SESSION SET CONTAINER=FREEPDB1;\nCREATE USER CLONE_FIXTURE NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE USER CLONE_INDEX NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE TABLE CLONE_FIXTURE.T (ID NUMBER, LABEL VARCHAR2(40));\nCREATE UNIQUE INDEX CLONE_INDEX.T_PK ON CLONE_FIXTURE.T(ID);\nALTER TABLE CLONE_FIXTURE.T ADD CONSTRAINT T_PK PRIMARY KEY(ID) USING INDEX CLONE_INDEX.T_PK;\nCOMMENT ON TABLE CLONE_FIXTURE.T IS 'clone table';\nCOMMENT ON COLUMN CLONE_FIXTURE.T.LABEL IS 'clone label';\nINSERT INTO CLONE_FIXTURE.T VALUES (1, 'source row');\nCREATE VIEW CLONE_FIXTURE.V AS SELECT ID, LABEL FROM CLONE_FIXTURE.T;\nCREATE SEQUENCE CLONE_FIXTURE.EXTERNAL_SEQ;\nCREATE TABLE CLONE_FIXTURE.WITH_DEFAULT (ID NUMBER DEFAULT CLONE_FIXTURE.EXTERNAL_SEQ.NEXTVAL);\nCREATE INDEX CLONE_INDEX.DEFAULT_IX ON CLONE_FIXTURE.WITH_DEFAULT(ID);\nCOMMIT;\nEXIT\n`,
+        input: `WHENEVER SQLERROR EXIT 1\nALTER SESSION SET CONTAINER=FREEPDB1;\nCREATE USER CLONE_FIXTURE NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE USER CLONE_INDEX NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE TABLE CLONE_FIXTURE.T (ID NUMBER, LABEL VARCHAR2(40));\nCREATE UNIQUE INDEX CLONE_INDEX.T_PK ON CLONE_FIXTURE.T(ID);\nALTER TABLE CLONE_FIXTURE.T ADD CONSTRAINT T_PK PRIMARY KEY(ID) USING INDEX CLONE_INDEX.T_PK;\nCOMMENT ON TABLE CLONE_FIXTURE.T IS 'clone table';\nCOMMENT ON COLUMN CLONE_FIXTURE.T.LABEL IS 'clone label';\nINSERT INTO CLONE_FIXTURE.T VALUES (1, 'source row');\nCREATE VIEW CLONE_FIXTURE.V AS SELECT ID, LABEL FROM CLONE_FIXTURE.T;\nCREATE SEQUENCE CLONE_FIXTURE.EXTERNAL_SEQ;\nCREATE TABLE CLONE_FIXTURE.WITH_DEFAULT (ID NUMBER DEFAULT CLONE_FIXTURE.EXTERNAL_SEQ.NEXTVAL);\nCREATE INDEX CLONE_INDEX.DEFAULT_IX ON CLONE_FIXTURE.WITH_DEFAULT(ID);\nCREATE SEQUENCE CLONE_FIXTURE.RESTART_SEQ MINVALUE 1 MAXVALUE 999999 START WITH 500 NOCACHE;\nCREATE SYNONYM CLONE_FIXTURE.SEQ_ALIAS FOR CLONE_FIXTURE.RESTART_SEQ;\nCREATE PACKAGE CLONE_FIXTURE.CONSTANTS AS n CONSTANT NUMBER := 42; END;\n/\nCREATE FUNCTION CLONE_FIXTURE.F RETURN NUMBER AS n NUMBER; BEGIN SELECT COUNT(*) INTO n FROM CLONE_FIXTURE.T; RETURN n; END;\n/\nGRANT SELECT ON CLONE_FIXTURE.T TO CLONE_INDEX;\nCREATE PROCEDURE CLONE_INDEX.P(n OUT NUMBER) AS BEGIN SELECT COUNT(*) INTO n FROM CLONE_FIXTURE.T; END;\n/\nCOMMIT;\nEXIT\n`,
       },
     );
     const selection = {
-      version: 2,
+      version: 3,
+      functions: [{ owner: 'CLONE_FIXTURE', name: 'F' }],
+      procedures: [{ owner: 'CLONE_INDEX', name: 'P' }],
+      packages: [{ owner: 'CLONE_FIXTURE', name: 'CONSTANTS' }],
+      sequences: [{ owner: 'CLONE_FIXTURE', name: 'RESTART_SEQ' }],
+      synonyms: [{ owner: 'CLONE_FIXTURE', name: 'SEQ_ALIAS' }],
       tables: [{ owner: 'CLONE_FIXTURE', name: 'T' }],
       views: [{ owner: 'CLONE_FIXTURE', name: 'V' }],
     };
@@ -309,7 +314,26 @@ test(
       join(root, 'config/local/objects.json'),
       JSON.stringify(selection),
     );
-    await writeFile(join(root, 'config/local/policy.json'), '{}');
+    await writeFile(
+      join(root, 'config/local/policy.json'),
+      JSON.stringify({
+        version: 2,
+        objectGrants: [
+          {
+            reference: { owner: 'CLONE_FIXTURE', name: 'T' },
+            type: 'TABLE',
+            grantee: 'CLONE_INDEX',
+            privileges: ['SELECT'],
+          },
+        ],
+        sequenceStarts: [
+          {
+            reference: { owner: 'CLONE_FIXTURE', name: 'RESTART_SEQ' },
+            startWith: '700',
+          },
+        ],
+      }),
+    );
     const source = await oracle.getConnection({
       user: 'SYSTEM',
       password: config.source.password,
@@ -415,7 +439,26 @@ test(
       const preflightFailure = await cloneDatabase({ root });
       assert.equal(preflightFailure.result.destinationResetStarted, false);
       await destination.sql('SELECT * FROM CLONE_FIXTURE.SENTINEL;');
-      await writeFile(join(root, 'config/local/policy.json'), '{}');
+      await writeFile(
+        join(root, 'config/local/policy.json'),
+        JSON.stringify({
+          version: 2,
+          objectGrants: [
+            {
+              reference: { owner: 'CLONE_FIXTURE', name: 'T' },
+              type: 'TABLE',
+              grantee: 'CLONE_INDEX',
+              privileges: ['SELECT'],
+            },
+          ],
+          sequenceStarts: [
+            {
+              reference: { owner: 'CLONE_FIXTURE', name: 'RESTART_SEQ' },
+              startWith: '700',
+            },
+          ],
+        }),
+      );
       const priorRuns = await readdir(join(root, 'artifacts'));
       await runProcess('npm', ['run', 'db:clone'], {
         cwd: root,
@@ -552,6 +595,22 @@ test(
         connectString: '127.0.0.1:1529/FREEPDB1',
       });
       try {
+        assert.deepEqual(
+          (
+            await retryConnection.execute(
+              'SELECT CLONE_FIXTURE.RESTART_SEQ.NEXTVAL FROM dual',
+            )
+          ).rows,
+          [[700]],
+        );
+        assert.deepEqual(
+          (
+            await retryConnection.execute(
+              "SELECT object_type FROM dba_objects WHERE owner='CLONE_FIXTURE' AND object_name='CONSTANTS' ORDER BY object_type",
+            )
+          ).rows,
+          [['PACKAGE']],
+        );
         assert.deepEqual(
           (
             await retryConnection.execute(

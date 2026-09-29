@@ -526,9 +526,9 @@ test('restricted ALL catalog sessions have only explicit grants and reject hidde
       assert.deepEqual(await rows('SELECT role FROM session_roles'), []);
       assert.deepEqual(
         await rows(
-          'SELECT DISTINCT privilege FROM user_tab_privs WHERE grantee=USER',
+          'SELECT DISTINCT privilege FROM user_tab_privs WHERE grantee=USER ORDER BY privilege',
         ),
-        [['SELECT']],
+        user === 'SCHEMA_READER' ? [['EXECUTE'], ['SELECT']] : [['SELECT']],
       );
       await assert.rejects(
         connection.execute('SELECT COUNT(*) FROM dba_tables'),

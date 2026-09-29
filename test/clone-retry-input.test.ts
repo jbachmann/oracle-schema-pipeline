@@ -22,11 +22,41 @@ import { sourceDocumentSchema, policySchema } from '../src/model.js';
 import { transformSource } from '../src/transform.js';
 import { generateSql } from '../src/generate.js';
 import { generatedReplay } from '../scripts/compose-destination.js';
+import { sequence } from './program-fixtures.js';
 const source = sourceDocumentSchema.parse(
   JSON.parse(
     await readFile(new URL('../examples/source.json', import.meta.url), 'utf8'),
   ),
 );
+
+test('v6 retry preserves saved sequence overrides and SQL without source access', async () => {
+  const { input, output } = await fixture((target) => {
+    target.sequences = [sequence()];
+    target.targetSequences = [sequence().reference];
+    target.policy.sequenceStarts = [
+      { reference: sequence().reference, startWith: '777' },
+    ];
+    return target;
+  });
+  const result = await prepareRetryInput(input, output);
+  assert.equal(result.target.policy.sequenceStarts[0].startWith, '777');
+  assert.match(result.sql, /START WITH 777/);
+  assert.equal(
+    await readFile(join(input, 'clone.sql'), 'utf8'),
+    await readFile(join(output, 'clone.sql'), 'utf8'),
+  );
+});
+
+test('format-v5 target bundles require re-extraction before retry can proceed', async () => {
+  const { input, output } = await fixture((target) => ({
+    ...target,
+    formatVersion: 5,
+  }));
+  await assert.rejects(prepareRetryInput(input, output), (error) => {
+    assert.match((error as { guidance: string }).guidance, /re-extract/);
+    return true;
+  });
+});
 async function fixture(
   change?: (target: ReturnType<typeof transformSource>) => unknown,
   report = jsonBytes({}),

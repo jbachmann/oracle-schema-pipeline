@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "tables": [],
+  "views": [],
+  "procedures": [{ "owner": "APP", "package": "ORDER_API", "name": "CLOSE_ORDER" }],
+  "functions": [{ "owner": "APP", "name": "NORMALIZE_CODE" }],
+  "packages": [{ "owner": "APP", "name": "ORDER_CONSTANTS" }],
+  "sequences": [{ "owner": "APP", "name": "ORDER_SEQ" }],
+  "synonyms": [{ "owner": "APP", "name": "NEXT_ORDER_ID" }]
+}

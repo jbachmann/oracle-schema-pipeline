@@ -199,11 +199,17 @@ only `publication/complete` means the source artifact was published.
 
 Failures include an allowlisted catalog code (`CATALOG_UNKNOWN_VALUE`,
 `CATALOG_CARDINALITY`, `CATALOG_INCOMPLETE_METADATA`) or `EXTRACTION_FAILED`.
+Program selection failures also allow `PROCEDURE_SELECTION_NOT_FOUND`,
+`FUNCTION_SELECTION_NOT_FOUND`, `PACKAGE_SELECTION_NOT_FOUND`, and
+`PACKAGE_BODY_VISIBILITY`. Additive query categories cover `program-objects`,
+`program-source`, `program-members`, `program-arguments`, `program-settings`,
+`program-dependencies`, `catalog-capabilities`, `sequences`, `synonyms`, and
+`table-dependencies`; event version remains 1.
 With progress enabled, CLI failures also use JSON and omit raw error messages.
 Events never include passwords, usernames used to connect, DSNs/descriptors, TNS
 contents, SQL/binds, expression text, or driver messages. Schema object identifiers
 are included intentionally. Events are separate from semantic diagnostics and
-source/target formats are unchanged. Library callers can share an optional
+the event envelope is independent of source/target format versions. Library callers can share an optional
 `ExtractionProgress(callback)` between `OracleCatalog` and `extractSource`;
 synchronous observer exceptions are ignored so telemetry cannot alter extraction.
 If a library caller's row-count callback throws, the operation still completes
@@ -410,15 +416,15 @@ Unsupported structures can still appear in source JSON, with recorded features;
 transformation produces a target and report with blocking diagnostics. Some
 unrepresentable or inaccessible catalog metadata fails extraction itself explicitly.
 
-No application rows, view comments, schema comments, standalone sequences,
-triggers, stored programs, synonyms, jobs, security policies, comments on other
+No application rows, view comments, schema comments,
+triggers, jobs, security policies, comments on other
 object types, original grants, statistics, or full
 physical configuration are exported. System-managed LOB indexes and generated
 hidden columns are not emitted as independent objects. This version reconstructs
 a supported relational slice; it is not a universal database backup.
 
 Format v2 source and target artifacts are intentionally rejected; re-extract them.
-The object-selection document remains version 2.
+Selection version 3 supports the explicit object collections below; version 2 remains accepted.
 
 ## Diagnostics and file behavior
 
@@ -737,7 +743,7 @@ table selection into that owner's schema.
 
 Format v5 requires a `dependencies` array on every index. Re-extract format-4
 artifacts; table-level prerequisites cannot identify the correct grant recipient.
-Selection version 2 and policy version 1 remain unchanged.
+Selection version 2 and policy version 1 remain accepted as legacy input; current normalized versions are 3 and 2.
 
 For exact local FUNCTION or PACKAGE dependencies of function-based indexes,
 generation emits deduplicated `GRANT EXECUTE` statements to the index owner before
@@ -777,7 +783,7 @@ agreement. The pipeline does not parse arbitrary SQL to verify that agreement.
 Both source and target v3/v4 artifacts are rejected with a re-extraction message.
 Re-extract from Oracle and transform again; changing only `formatVersion` cannot
 recover facts omitted by the old exporter. Object-selection version 2 and policy
-version 1 are unchanged. Live restriction coverage is Oracle AI Database Free
+version 1 remain accepted as legacy input. Live restriction coverage is Oracle AI Database Free
 23.26.3.0.0; the stricter adapter is not yet integration-certified on older Oracle
 versions. See [ADR 0004](docs/adr/0004-strict-catalog-decoding.md).
 
@@ -838,3 +844,87 @@ The disposable operational integration suite is opt-in:
 `ORACLE_LOCAL_CLONE_INTEGRATION=1 npm run test:integration`. It uses a temporary
 checkout/config, listener 1529, and refuses pre-existing operational resources.
 It cleans up only the operational resources it creates; CI also tears down the test project.
+
+
+## Explicit programs, sequences, and private synonyms (format 6)
+
+`objects.json` version 3 accepts `tables`, `views`, `procedures`, `functions`,
+`packages`, `sequences`, and `synonyms`, each defaulting to an empty array. At least
+one entry is required. References use exact case-sensitive `{owner, name}` values;
+procedure/function members use `{owner, package, name}`. Selecting a public member
+includes the entire specification and existing body, including helpers, other
+members, state, and initialization. Direct package selection also supports verified
+body-less constants/type-only specifications. See [objects.json](examples/objects.json).
+This example illustrates selection syntax; select its actual dependencies as well.
+
+Dependencies remain explicit. Programs never automatically export additional
+objects. Keep listing required tables/views and supported program/sequence/alias
+providers, or provision and acknowledge external prerequisites. Local synonym
+chains retain every immediate target; each link must be selected or acknowledged.
+Synonyms confer no privileges. Schema-level types and infrastructure remain manual;
+selecting a package does not add support for new table column types. Triggers,
+application rows, dynamic SQL dependencies, and runtime invoker privileges remain
+outside reconstruction.
+
+Policy version 2 adds `objectGrants` and `sequenceStarts`, both defaulting to `[]`:
+
+```json
+{
+  "version": 2,
+  "createSchemas": true,
+  "objectGrants": [{
+    "reference": { "owner": "APP", "name": "ORDERS" },
+    "type": "TABLE",
+    "grantee": "REPORTING",
+    "privileges": ["SELECT", "UPDATE"]
+  }],
+  "sequenceStarts": [{
+    "reference": { "owner": "APP", "name": "ORDER_SEQ" },
+    "startWith": "1000000"
+  }]
+}
+```
+
+Grant recipients must own included objects. TABLE/VIEW allow SELECT, INSERT,
+UPDATE, DELETE; SEQUENCE allows SELECT; PROCEDURE/FUNCTION/PACKAGE/TYPE allow
+EXECUTE. No PUBLIC, role, self, synonym, column, or grant-option grants are added.
+Direct grants run after their object exists and before dependent compilation/DDL.
+Replay with explicit grants requires dictionary access to DBA_TAB_PRIVS for exact
+cross-schema grant verification (the local Compose executor has this access).
+Externally supplied objects still require `createSchemas=false` and prerequisite
+setup. Ordinary selected providers do not require that mode.
+
+Sequences restart at MINVALUE when ascending or MAXVALUE when descending unless
+an exact decimal-string override is supplied. Original custom START WITH and
+captured LAST_NUMBER are not continued. Separate application data may require a
+suitable override to avoid collisions. Cache, cycle, ordering, and owner KEEP are
+preserved; managed/identity, scalable, sharded, session, and shared sequences fail.
+Operational verification never evaluates NEXTVAL/CURRVAL. Retrying saved v6 SQL
+recreates the disposable destination and repeats its saved restart policy.
+
+Extraction reads catalog metadata only and does not execute or recompile selected
+source. Programs require readable source, settings, object/member/dependency facts,
+and stable before/after DDL guards. Another owner's absent ALL_OBJECTS body row is
+not proof of absence: use owning-schema access or explicitly choose DBA scope.
+No automatic privilege escalation occurs. The pinned Oracle 23 image is verified;
+older releases lacking required program metadata currently fail closed.
+
+Generated SQL uses CREATE without replacement and a bounded CLOB wrapper to
+preserve long source and embedded SQL*Plus-looking text. Execute UTF-8 scripts with
+`NLS_LANG=.AL32UTF8`; local replay sets this automatically. Conditional flags,
+length semantics, optimization/debug and Boolean-conversion settings are retained;
+code type, warnings and PL/Scope use reported target compiler policy. Programs,
+sequence definitions, alias targets, and grants are checked before completion.
+
+Source is trusted application content and is retained in JSON/SQL, not redacted.
+Do not select credential-bearing code. Replay does not deliberately call routines,
+but function-dependent DDL can invoke code or initialize packages. Compilation is
+not a runtime-equivalence guarantee or sandbox. Specialized functions, wrapped
+code, external call specifications, edition deployments, public/remote aliases,
+and real creation cycles block generation. Package-wide unsupported forms block
+the entire package.
+
+Format 5 and older source/target artifacts and retry bundles require re-extraction;
+do not merely change a version number. Legacy selection-v2/policy-v1 inputs remain
+accepted. Workbook Metadata counts cover the new objects; JSON remains authoritative
+for program text and dependencies. See [ADR 0009](docs/adr/0009-explicit-program-dependency-reconstruction.md).

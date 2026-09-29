@@ -16,18 +16,65 @@ export const objectReferenceSchema = z
   .strict();
 export type ObjectReference = z.infer<typeof objectReferenceSchema>;
 
+export const routineReferenceSchema = z.union([
+  objectReferenceSchema,
+  z
+    .object({
+      owner: identifierSchema,
+      package: identifierSchema,
+      name: identifierSchema,
+    })
+    .strict(),
+]);
+export type RoutineReference = z.infer<typeof routineReferenceSchema>;
+const relationalSelection = {
+  tables: z.array(objectReferenceSchema).default([]),
+  views: z.array(objectReferenceSchema).default([]),
+};
+const explicitSelection = {
+  procedures: z.array(routineReferenceSchema).default([]),
+  functions: z.array(routineReferenceSchema).default([]),
+  packages: z.array(objectReferenceSchema).default([]),
+  sequences: z.array(objectReferenceSchema).default([]),
+  synonyms: z.array(objectReferenceSchema).default([]),
+};
 export const selectionSchema = z
-  .object({
-    version: z.literal(2),
-    tables: z.array(objectReferenceSchema).default([]),
-    views: z.array(objectReferenceSchema).default([]),
-  })
-  .strict()
+  .union([
+    z
+      .object({ version: z.literal(2), ...relationalSelection })
+      .strict()
+      .transform((value) => ({
+        ...value,
+        version: 3 as const,
+        procedures: [] as RoutineReference[],
+        functions: [] as RoutineReference[],
+        packages: [] as ObjectReference[],
+        sequences: [] as ObjectReference[],
+        synonyms: [] as ObjectReference[],
+      })),
+    z
+      .object({
+        version: z.literal(3),
+        ...relationalSelection,
+        ...explicitSelection,
+      })
+      .strict(),
+  ])
   .refine(
-    (value) => value.tables.length + value.views.length > 0,
-    'At least one table or view is required.',
+    (value) =>
+      value.tables.length +
+        value.views.length +
+        value.procedures.length +
+        value.functions.length +
+        value.packages.length +
+        value.sequences.length +
+        value.synonyms.length >
+      0,
+    'At least one selected object is required.',
   );
-export type ObjectSelection = z.infer<typeof selectionSchema>;
+// The public extraction boundary also accepts legacy selections from custom catalogs.
+export type ObjectSelection = z.input<typeof selectionSchema>;
+export type NormalizedSelection = z.infer<typeof selectionSchema>;
 
 export const diagnosticSchema = z
   .object({
@@ -193,6 +240,7 @@ export const tableSchema = z
     columns: z.array(columnSchema).min(1),
     constraints: z.array(constraintSchema),
     indexes: z.array(indexSchema),
+    dependencies: z.array(viewDependencySchema),
   })
   .strict();
 export type TableDefinition = z.infer<typeof tableSchema>;
@@ -219,9 +267,121 @@ export const viewSchema = z
   .strict();
 export type ViewDefinition = z.infer<typeof viewSchema>;
 
+export const decimalIntegerSchema = z.string().regex(/^(?:0|-?[1-9][0-9]*)$/u);
+export const routinePropertiesSchema = z
+  .object({
+    deterministic: z.boolean(),
+    resultCache: z.boolean(),
+    pipelined: z.boolean(),
+    parallelEnabled: z.boolean(),
+    aggregate: z.boolean(),
+    sqlMacro: z.enum(['NONE', 'SCALAR', 'TABLE']),
+  })
+  .strict();
+export const programUnitSchema = z
+  .object({
+    reference: objectReferenceSchema,
+    type: z.enum(['PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY']),
+    sourceLines: z
+      .array(
+        z
+          .object({ line: z.number().int().positive(), text: z.string() })
+          .strict(),
+      )
+      .min(1),
+    status: z.enum(['VALID', 'INVALID']),
+    editionable: z.boolean(),
+    editionName: z.string().nullable(),
+    authid: z.enum(['DEFINER', 'CURRENT_USER']).nullable(),
+    packageBodyPresent: z.boolean().nullable(),
+    routineProperties: routinePropertiesSchema.nullable(),
+    members: z.array(
+      z
+        .object({
+          name: identifierSchema,
+          subprogramId: z.number().int().positive(),
+          overload: z.string().nullable(),
+          kind: z.enum(['procedure', 'function']),
+          routineProperties: routinePropertiesSchema,
+        })
+        .strict(),
+    ),
+    dependencies: z.array(
+      viewDependencySchema.extend({ oracleMaintained: z.boolean() }).strict(),
+    ),
+    compilerSettings: z
+      .object({
+        plsqlOptimizeLevel: z.number().int().min(0).max(3),
+        plsqlCodeType: z.enum(['INTERPRETED', 'NATIVE']),
+        plsqlDebug: z.boolean(),
+        plsqlWarnings: z.string(),
+        nlsLengthSemantics: z.enum(['BYTE', 'CHAR']),
+        plsqlCcflags: z.string().nullable(),
+        plscopeSettings: z.string(),
+        plsqlImplicitConversionBool: z.boolean().nullable(),
+      })
+      .strict(),
+    unsupportedFeatures: z.array(z.string()),
+  })
+  .strict();
+export type ProgramUnit = z.infer<typeof programUnitSchema>;
+export const sequenceSchema = z
+  .object({
+    reference: objectReferenceSchema,
+    minValue: decimalIntegerSchema,
+    maxValue: decimalIntegerSchema,
+    incrementBy: decimalIntegerSchema,
+    cacheSize: decimalIntegerSchema,
+    lastNumber: decimalIntegerSchema,
+    cycle: z.boolean(),
+    order: z.boolean(),
+    scale: z.boolean(),
+    extend: z.boolean(),
+    sharded: z.boolean(),
+    session: z.boolean(),
+    keep: z.boolean(),
+    sharing: z.enum(['NONE', 'METADATA LINK', 'DATA LINK']),
+    identityBacking: z.boolean(),
+    unsupportedFeatures: z.array(z.string()),
+  })
+  .strict();
+export type SequenceDefinition = z.infer<typeof sequenceSchema>;
+export const synonymSchema = z
+  .object({
+    reference: objectReferenceSchema,
+    target: objectReferenceSchema,
+    databaseLink: z.string().nullable(),
+    targetType: z.string(),
+    editionable: z.boolean(),
+    editionName: z.string().nullable(),
+    sharing: z.string(),
+    unsupportedFeatures: z.array(z.string()),
+  })
+  .strict();
+export type SynonymDefinition = z.infer<typeof synonymSchema>;
+export const synonymResolutionSchema = z
+  .object({
+    links: z
+      .array(
+        z
+          .object({
+            reference: objectReferenceSchema,
+            target: objectReferenceSchema,
+            databaseLink: z.string().nullable(),
+          })
+          .strict(),
+      )
+      .min(1),
+    terminal: z
+      .object({ reference: objectReferenceSchema, type: z.string() })
+      .strict(),
+  })
+  .strict();
+
 export const prerequisiteSchema = z
   .object({
     requiredBy: objectReferenceSchema,
+    synonymResolution: synonymResolutionSchema.nullable(),
     reference: objectReferenceSchema,
     type: z.string(),
     databaseLink: z.string().nullable(),
@@ -230,10 +390,10 @@ export const prerequisiteSchema = z
 export type Prerequisite = z.infer<typeof prerequisiteSchema>;
 
 const commonDocumentProperties = {
-  formatVersion: z.literal(5, {
+  formatVersion: z.literal(6, {
     errorMap: () => ({
       message:
-        'Expected format v5; re-extract older artifacts with this version of the pipeline.',
+        'Expected format v6; re-extract older artifacts with this version of the pipeline.',
     }),
   }),
   dialect: z.literal('oracle'),
@@ -241,6 +401,14 @@ const commonDocumentProperties = {
   extractedAt: z.string().datetime(),
   targetTables: z.array(objectReferenceSchema),
   targetViews: z.array(objectReferenceSchema),
+  targetProcedures: z.array(routineReferenceSchema),
+  targetFunctions: z.array(routineReferenceSchema),
+  targetPackages: z.array(objectReferenceSchema),
+  targetSequences: z.array(objectReferenceSchema),
+  targetSynonyms: z.array(objectReferenceSchema),
+  programUnits: z.array(programUnitSchema),
+  sequences: z.array(sequenceSchema),
+  synonyms: z.array(synonymSchema),
   tables: z.array(tableSchema),
   views: z.array(viewSchema),
   prerequisites: z.array(prerequisiteSchema),
@@ -252,31 +420,72 @@ export const sourceDocumentSchema = z
   .strict();
 export type SourceDocument = z.infer<typeof sourceDocumentSchema>;
 
-export const policySchema = z
+export const objectGrantSchema = z
   .object({
-    version: z.literal(1).default(1),
-    createSchemas: z.boolean().default(true),
-    defaultTablespace: identifierSchema.default('USERS'),
-    maxStringSize: z.enum(['STANDARD', 'EXTENDED']).default('STANDARD'),
-    // Declare provisioned external objects and their existing prerequisite setup.
-    // Required index-owner EXECUTE grants are derived and emitted separately.
-    externalPrerequisites: z
+    reference: objectReferenceSchema,
+    type: z.enum([
+      'TABLE',
+      'VIEW',
+      'PROCEDURE',
+      'PACKAGE',
+      'FUNCTION',
+      'SEQUENCE',
+      'TYPE',
+    ]),
+    grantee: identifierSchema,
+    privileges: z
+      .array(z.enum(['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'EXECUTE']))
+      .min(1),
+  })
+  .strict();
+export type ObjectGrant = z.infer<typeof objectGrantSchema>;
+const policyProperties = {
+  createSchemas: z.boolean().default(true),
+  defaultTablespace: identifierSchema.default('USERS'),
+  maxStringSize: z.enum(['STANDARD', 'EXTENDED']).default('STANDARD'),
+  externalPrerequisites: z
+    .array(
+      z.object({ reference: objectReferenceSchema, type: z.string() }).strict(),
+    )
+    .default([]),
+};
+export const currentPolicySchema = z
+  .object({
+    version: z.literal(2),
+    ...policyProperties,
+    objectGrants: z.array(objectGrantSchema).default([]),
+    sequenceStarts: z
       .array(
         z
-          .object({ reference: objectReferenceSchema, type: z.string() })
+          .object({
+            reference: objectReferenceSchema,
+            startWith: decimalIntegerSchema,
+          })
           .strict(),
       )
       .default([]),
   })
   .strict();
-export type TargetPolicy = z.infer<typeof policySchema>;
+export const policySchema = z.union([
+  z
+    .object({ version: z.literal(1).default(1), ...policyProperties })
+    .strict()
+    .transform((value) => ({
+      ...value,
+      version: 2 as const,
+      objectGrants: [],
+      sequenceStarts: [],
+    })),
+  currentPolicySchema,
+]);
+export type TargetPolicy = z.infer<typeof currentPolicySchema>;
 
 export const targetDocumentSchema = z
   .object({
     ...commonDocumentProperties,
     kind: z.literal('target'),
     targetVersion: z.literal('23'),
-    policy: policySchema,
+    policy: currentPolicySchema,
   })
   .strict();
 export type TargetDocument = z.infer<typeof targetDocumentSchema>;

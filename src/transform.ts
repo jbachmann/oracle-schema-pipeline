@@ -1,3 +1,5 @@
+import { objectGrants, renderObjectGrant } from './object-grants.js';
+import { sequenceStart } from './sequences.js';
 /**
  * Converts extracted Oracle schema metadata into a reviewable Oracle 23 target
  * document without changing the source or connecting to a database. It attaches
@@ -49,6 +51,49 @@ export function transformSource(
       message: renderIndexGrant(grant),
     })),
   );
+  for (const sequence of target.sequences)
+    target.diagnostics.push({
+      severity: 'change',
+      code: 'SEQUENCE_RESTART',
+      object: qualifiedName(sequence.reference),
+      message: `Restart at ${sequenceStart(sequence, target)} (${target.policy.sequenceStarts.some((item) => objectKey(item.reference) === objectKey(sequence.reference)) ? 'policy override' : 'direction bound'}); captured allocation state is not continued.`,
+    });
+  for (const grant of objectGrants(target).grants.filter(
+    (item) => item.explicit,
+  ))
+    target.diagnostics.push({
+      severity: 'change',
+      code: 'EXPLICIT_OBJECT_GRANT',
+      object: qualifiedName(grant.reference),
+      message: renderObjectGrant(grant),
+    });
+  for (const unit of target.programUnits) {
+    target.diagnostics.push({
+      severity: 'change',
+      code: 'PROGRAM_COMPILER_POLICY',
+      object: qualifiedName(unit.reference) + ' ' + unit.type,
+      message:
+        'Compile with INTERPRETED, ENABLE:ALL warnings, and IDENTIFIERS:NONE; preserve captured semantic compiler settings.',
+    });
+    if (unit.type === 'PACKAGE')
+      target.diagnostics.push({
+        severity: 'change',
+        code: 'INCLUDE_WHOLE_PACKAGE',
+        object: qualifiedName(unit.reference),
+        message: `Include complete specification${unit.packageBodyPresent ? ' and body' : ' (authoritatively body-less)'}. Selected members: ${
+          [...target.targetProcedures, ...target.targetFunctions]
+            .filter(
+              (root) =>
+                'package' in root &&
+                root.owner === unit.reference.owner &&
+                root.package === unit.reference.name,
+            )
+            .map((root) => root.name)
+            .sort()
+            .join(', ') || 'direct package selection'
+        }.`,
+      });
+  }
   return target;
 }
 
