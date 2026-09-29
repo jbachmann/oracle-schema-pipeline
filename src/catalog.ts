@@ -1,3 +1,4 @@
+import { readSynonym } from './catalog-synonyms.js';
 import { CatalogError, catalogFailure } from './catalog-decoding.js';
 import { readProgram } from './catalog-programs.js';
 import { readSequence } from './catalog-sequences.js';
@@ -56,6 +57,20 @@ export class OracleCatalog implements SourceCatalog {
   ) {
     this.reader = new CatalogReader(connection, scope, progress, batchSize);
     this.constraints = new ConstraintReader(this.reader);
+  }
+
+  async synonym(reference: ObjectReference) {
+    try {
+      return await readSynonym(this.reader, reference);
+    } catch (error) {
+      if (error instanceof CatalogError) throw error;
+      catalogFailure(
+        'SYNONYM_METADATA_UNAVAILABLE',
+        qualifiedName(reference),
+        'synonym',
+        'Cannot read complete synonym metadata. Check catalog scope and privileges.',
+      );
+    }
   }
 
   async program(reference: ObjectReference, kind: ProgramKind) {

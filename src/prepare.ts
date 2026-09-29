@@ -1,7 +1,8 @@
+import { renderSynonym, verifySynonymsSql } from './synonyms.js';
 import { creationOrder } from './creation-order.js';
 import { compilePrograms } from './program-sql.js';
 import { renderSequence } from './sequences.js';
-import { isIncluded } from './dependencies.js';
+import { isIncluded, resolveDependency } from './dependencies.js';
 /**
  * Coordinates SQL preparation from parsed target metadata and semantic analysis.
  * Orders the reconstruction phases, sorts objects deterministically, and places
@@ -248,6 +249,11 @@ export function prepareSql(
 
   emitPreamble(document, collector);
   emitSchemas(document, collector);
+  for (const synonym of [...document.synonyms].sort((a, b) =>
+    compareOrdinal(objectKey(a.reference), objectKey(b.reference)),
+  )) {
+    collector.emit(qualifiedName(synonym.reference), renderSynonym(synonym));
+  }
   for (const sequence of [...document.sequences].sort((a, b) =>
     compareOrdinal(objectKey(a.reference), objectKey(b.reference)),
   )) {
@@ -260,7 +266,8 @@ export function prepareSql(
     );
   }
   const sequenceGrants = new Set<string>();
-  for (const edge of document.prerequisites) {
+  for (const original of document.prerequisites) {
+    const edge = resolveDependency(document, original);
     if (
       edge.type === 'SEQUENCE' &&
       isIncluded(document, edge) &&
@@ -274,7 +281,7 @@ export function prepareSql(
       );
   }
   for (const sql of [...sequenceGrants].sort()) collector.emit('document', sql);
-  if (document.programs.length) {
+  if (document.programs.length || document.synonyms.length) {
     try {
       for (const group of creationOrder(document)) {
         const programs = group.flatMap((node) =>
@@ -293,6 +300,7 @@ export function prepareSql(
           if (node.kind === 'table') {
             const grants = new Set(
               document.prerequisites
+                .map((edge) => resolveDependency(document, edge))
                 .filter(
                   (edge) =>
                     objectKey(edge.requiredBy) ===
@@ -311,7 +319,18 @@ export function prepareSql(
               collector.emit(qualifiedName(node.value.reference), grant);
             emitTables([node.value], document.policy, collector);
           }
-          if (node.kind === 'view') emitViews([node.value], collector);
+          if (node.kind === 'view')
+            emitViews(
+              [
+                {
+                  ...node.value,
+                  dependencies: node.value.dependencies.map((edge) =>
+                    resolveDependency(document, edge),
+                  ),
+                },
+              ],
+              collector,
+            );
         }
       }
     } catch {
@@ -331,10 +350,19 @@ export function prepareSql(
   emitLocalConstraints(tables, collector);
   emitReferenceGrants(tables, collector);
   emitForeignKeys(tables, collector);
-  if (!document.programs.length) emitViews(analysis.orderedViews, collector);
+  if (!(document.programs.length || document.synonyms.length))
+    emitViews(
+      analysis.orderedViews.map((view) => ({
+        ...view,
+        dependencies: view.dependencies.map((edge) =>
+          resolveDependency(document, edge),
+        ),
+      })),
+      collector,
+    );
   // Adding table constraints can invalidate already-created views and programs.
   // Revisit the same dependency order after those mutations, compiling only invalid units.
-  if (document.programs.length) {
+  if (document.programs.length || document.synonyms.length) {
     try {
       for (const group of creationOrder(document)) {
         for (const node of group)
@@ -370,6 +398,8 @@ END;
         ),
       ),
     );
+  if (document.synonyms.length)
+    collector.emit('synonyms', verifySynonymsSql(document));
   collector.emit('document', 'PROMPT Schema reconstruction completed.');
   return collector.result;
 }

@@ -93,7 +93,7 @@ async function main(): Promise<void> {
   npm run schema -- generate --input target.json --output clone.sql
   npm run schema -- dictionary --input source.json --output dictionary.xlsx
 
-Selection v2 accepts tables, views, packages, procedures, functions and sequences.
+Selection v2 accepts tables, views, packages, procedures, functions, sequences and synonyms.
 Extract accepts --progress-json for versioned JSON-lines progress on stderr.
 Only extract connects to Oracle. Catalog scope: all (default) or dba.
 Connection arguments may be visible to local processes; never include passwords.
@@ -185,7 +185,7 @@ Unsupported models never produce SQL.`);
         writeJson(values.output!, source, publicationOptions),
       );
       console.log(
-        `Extracted ${source.tables.length} table definitions, ${source.views.length} views, ${source.programs.length} programs and ${source.sequences.length} sequences to ${values.output}.`,
+        `Extracted ${source.tables.length} table definitions, ${source.views.length} views, ${source.programs.length} programs and ${source.sequences.length} sequences, ${source.synonyms.length} synonyms to ${values.output}.`,
       );
     } finally {
       await connection.close();

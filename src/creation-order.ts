@@ -5,7 +5,7 @@ import {
   type ViewDefinition,
   type ProgramDefinition,
 } from './model.js';
-import { isIncluded } from './dependencies.js';
+import { isIncluded, resolveDependency } from './dependencies.js';
 export type Creation =
   | { kind: 'table'; value: TableDefinition }
   | { kind: 'view'; value: ViewDefinition }
@@ -39,6 +39,7 @@ export function creationOrder(document: TargetDocument): Creation[][] {
           ? node.value.dependencies
           : node.value.units.flatMap((unit) => unit.dependencies);
     const resolved = dependencies
+      .map((edge) => resolveDependency(document, edge))
       .filter((edge) => isIncluded(document, edge))
       .map((edge) => {
         const identity = objectKey(edge.reference);

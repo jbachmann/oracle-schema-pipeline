@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "tables": [{ "owner": "APP", "name": "CUSTOMERS" }],
+  "synonyms": [
+    { "owner": "REPORTING", "name": "CUSTOMERS" },
+    { "owner": "PUBLIC", "name": "CUSTOMER_LIST" }
+  ]
+}

@@ -2,10 +2,16 @@ import type { TargetDocument } from './model.js';
 
 /** Owners of included objects only; prerequisite and unresolved references do not provision schemas. */
 export function schemaOwners(
-  document: Pick<TargetDocument, 'tables' | 'views' | 'programs' | 'sequences'>,
+  document: Pick<
+    TargetDocument,
+    'tables' | 'views' | 'programs' | 'sequences' | 'synonyms'
+  >,
 ): string[] {
   return [
     ...new Set([
+      ...document.synonyms
+        .filter((item) => item.reference.owner !== 'PUBLIC')
+        .map((item) => item.reference.owner),
       ...document.tables.map((table) => table.reference.owner),
       ...document.programs.map((program) => program.reference.owner),
       ...document.sequences.map((sequence) => sequence.reference.owner),

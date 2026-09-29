@@ -132,6 +132,8 @@ function buildSheetDefinitions(source: SourceDocument): SheetDefinition[] {
         ['Target package count', source.targetPackages.length],
         ['Target procedure count', source.targetProcedures.length],
         ['Target function count', source.targetFunctions.length],
+        ['Target synonym count', source.targetSynonyms.length],
+        ['Included synonym count', source.synonyms.length],
         ['Target sequence count', source.targetSequences.length],
         ['Included table count', source.tables.length],
         ['Included view count', source.views.length],

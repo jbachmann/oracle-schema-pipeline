@@ -25,6 +25,7 @@ export const selectionSchema = z
     procedures: z.array(objectReferenceSchema).default([]),
     functions: z.array(objectReferenceSchema).default([]),
     sequences: z.array(objectReferenceSchema).default([]),
+    synonyms: z.array(objectReferenceSchema).default([]),
   })
   .strict()
   .refine(
@@ -36,6 +37,7 @@ export const selectionSchema = z
         value.procedures,
         value.functions,
         value.sequences,
+        value.synonyms,
       ].some((items) => items.length > 0),
     'At least one object is required.',
   )
@@ -48,6 +50,7 @@ export const selectionSchema = z
       'procedures',
       'functions',
       'sequences',
+      'synonyms',
     ] as const) {
       for (const reference of uniqueReferences(value[kind])) {
         const key = objectKey(reference);
@@ -308,11 +311,43 @@ export const sequenceSchema = z
   .strict();
 export type SequenceDefinition = z.infer<typeof sequenceSchema>;
 
+export const synonymTargetTypeSchema = z.enum([
+  'TABLE',
+  'VIEW',
+  'SEQUENCE',
+  'PACKAGE',
+  'PROCEDURE',
+  'FUNCTION',
+  'SYNONYM',
+]);
+export const synonymSchema = z
+  .object({
+    reference: objectReferenceSchema,
+    target: objectReferenceSchema,
+    databaseLink: z.string().nullable(),
+    editionable: z.boolean(),
+    resolution: z
+      .array(
+        z
+          .object({
+            reference: objectReferenceSchema,
+            type: synonymTargetTypeSchema,
+            // Exact mapping for intermediate aliases; terminal objects have no mapping.
+            target: objectReferenceSchema.nullable(),
+          })
+          .strict(),
+      )
+      .min(1),
+    unsupportedFeatures: z.array(z.string()),
+  })
+  .strict();
+export type SynonymDefinition = z.infer<typeof synonymSchema>;
+
 const commonDocumentProperties = {
-  formatVersion: z.literal(6, {
+  formatVersion: z.literal(7, {
     errorMap: () => ({
       message:
-        'Expected format v6; re-extract older artifacts with this version of the pipeline.',
+        'Expected format v7; re-extract older artifacts with this version of the pipeline.',
     }),
   }),
   dialect: z.literal('oracle'),
@@ -324,6 +359,8 @@ const commonDocumentProperties = {
   targetProcedures: z.array(objectReferenceSchema),
   targetFunctions: z.array(objectReferenceSchema),
   targetSequences: z.array(objectReferenceSchema),
+  targetSynonyms: z.array(objectReferenceSchema),
+  synonyms: z.array(synonymSchema),
   programs: z.array(programSchema),
   sequences: z.array(sequenceSchema),
   tables: z.array(tableSchema),

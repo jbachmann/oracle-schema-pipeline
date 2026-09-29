@@ -23,10 +23,12 @@ import {
   type ProgramDefinition,
   type ProgramKind,
   type SequenceDefinition,
+  type SynonymDefinition,
 } from './model.js';
 
 /** Read-only catalog metadata used to extract tables and optional views. */
 export interface SourceCatalog {
+  synonym?(reference: ObjectReference): Promise<SynonymDefinition>;
   program?(
     reference: ObjectReference,
     kind: ProgramKind,
@@ -70,6 +72,19 @@ async function extract(
   const targetPackages = uniqueReferences(parsed.packages);
   const targetProcedures = uniqueReferences(parsed.procedures);
   const targetFunctions = uniqueReferences(parsed.functions);
+  const targetSynonyms = uniqueReferences(parsed.synonyms);
+  const synonyms: SynonymDefinition[] = [];
+  for (const ref of targetSynonyms) {
+    if (!catalog.synonym)
+      throw new Error(
+        'SYNONYM_METADATA_UNAVAILABLE: Catalog does not support synonyms.',
+      );
+    synonyms.push(
+      await progress.measure('object', () => catalog.synonym!(ref), {
+        object: ref,
+      }),
+    );
+  }
   const targetSequences = uniqueReferences(parsed.sequences);
   const programs: ProgramDefinition[] = [];
   const sequences: SequenceDefinition[] = [];
@@ -151,7 +166,7 @@ async function extract(
   // Check the assembled document's shape at the stage boundary. Semantic checks
   // against target policy belong to downstream validation.
   return sourceDocumentSchema.parse({
-    formatVersion: 6,
+    formatVersion: 7,
     kind: 'source',
     dialect: 'oracle',
     sourceVersion: await catalog.databaseVersion(),
@@ -162,6 +177,8 @@ async function extract(
     targetProcedures,
     targetFunctions,
     targetSequences,
+    targetSynonyms,
+    synonyms,
     programs,
     sequences,
     tables,

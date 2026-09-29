@@ -1,3 +1,4 @@
+import { resolveDependency } from './dependencies.js';
 /**
  * Semantic analysis checks the meaning and relationships of parsed metadata.
  * The schemas in model.ts check document shape; this module checks whether
@@ -119,7 +120,8 @@ export function analyzeTarget(document: TargetDocument) {
     validateViewMetadata(view, error);
 
     const dependencies = new Set<string>();
-    for (const edge of view.dependencies) {
+    for (const original of view.dependencies) {
+      const edge = resolveDependency(document, original);
       if (edge.databaseLink) {
         error(
           'REMOTE_VIEW_DEPENDENCY',
@@ -129,20 +131,26 @@ export function analyzeTarget(document: TargetDocument) {
       } else if (edge.type === 'TABLE' || edge.type === 'VIEW') {
         const dependency = objectKey(edge.reference);
         const definitions = edge.type === 'TABLE' ? tablesByKey : viewsByKey;
-        if (!definitions.has(dependency)) {
+        if (!definitions.has(dependency) && original.type !== 'SYNONYM') {
           error(
             'MISSING_VIEW_DEPENDENCY',
             viewName,
             `Required ${edge.type} ${qualifiedName(edge.reference)} is absent.`,
           );
-        } else if (edge.type === 'VIEW') {
+        } else if (edge.type === 'VIEW' && definitions.has(dependency)) {
           dependencies.add(dependency);
         }
+      } else if (edge.type === 'SYNONYM') {
+        error(
+          'UNRESOLVED_SYNONYM_TARGET',
+          viewName,
+          'Explicitly select the synonym to establish its underlying type and privileges.',
+        );
       } else if (!['FUNCTION', 'PACKAGE'].includes(edge.type)) {
         error(
           'UNSUPPORTED_VIEW_DEPENDENCY',
           viewName,
-          'Only TABLE, VIEW, FUNCTION and PACKAGE dependencies are supported.',
+          'Only TABLE, VIEW, FUNCTION, PACKAGE and SYNONYM dependencies are supported.',
         );
       }
     }

@@ -1,4 +1,4 @@
--- Generated from oracle-schema-pipeline format 6. Includes metadata-derived program DDL.
+-- Generated from oracle-schema-pipeline format 7. Includes metadata-derived program DDL.
 
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
 

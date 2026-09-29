@@ -7,13 +7,15 @@ import {
 
 type Definitions = Pick<
   TargetDocument,
-  'tables' | 'views' | 'programs' | 'sequences'
+  'tables' | 'views' | 'programs' | 'sequences' | 'synonyms'
 >;
 export function includedType(
   document: Definitions,
   reference: ObjectReference,
 ): string | undefined {
   const key = objectKey(reference);
+  if (document.synonyms.some((item) => objectKey(item.reference) === key))
+    return 'SYNONYM';
   if (document.tables.some((item) => objectKey(item.reference) === key))
     return 'TABLE';
   if (document.views.some((item) => objectKey(item.reference) === key))
@@ -36,11 +38,46 @@ export function isIncluded(
   );
 }
 
+/** Resolve only explicit SYNONYM facts; never guess aliases from matching names. */
+export function resolveDependency<
+  T extends {
+    reference: ObjectReference;
+    type: string;
+    databaseLink?: string | null;
+  },
+>(document: Definitions, edge: T): T {
+  if (edge.type !== 'SYNONYM' || edge.databaseLink) return edge;
+  const synonym = document.synonyms.find(
+    (item) => objectKey(item.reference) === objectKey(edge.reference),
+  );
+  const captured =
+    synonym ??
+    document.synonyms.find((item) =>
+      item.resolution.some(
+        (hop) =>
+          hop.type === 'SYNONYM' &&
+          objectKey(hop.reference) === objectKey(edge.reference),
+      ),
+    );
+  const terminal = captured?.resolution.at(-1);
+  return terminal
+    ? { ...edge, reference: terminal.reference, type: terminal.type }
+    : edge;
+}
+
 /** Facts remain in the artifact; resolution is always recomputed by consumers. */
 export function allPrerequisites(
   document: TargetDocument,
 ): (Prerequisite & { directAccess?: boolean })[] {
-  return [
+  const facts: (Prerequisite & { directAccess?: boolean })[] = [
+    ...document.synonyms.flatMap((synonym) =>
+      synonym.resolution.map((hop) => ({
+        requiredBy: synonym.reference,
+        reference: hop.reference,
+        type: hop.type,
+        databaseLink: null,
+      })),
+    ),
     ...document.prerequisites,
     ...document.views.flatMap((view) =>
       view.dependencies
@@ -59,4 +96,19 @@ export function allPrerequisites(
       ),
     ),
   ];
+  return facts.flatMap((edge) => {
+    const resolved = resolveDependency(document, edge);
+    if (resolved === edge) return [edge];
+    const program = document.programs.some(
+      (item) => objectKey(item.reference) === objectKey(edge.requiredBy),
+    );
+    return [
+      { ...edge, directAccess: false },
+      {
+        ...resolved,
+        directAccess:
+          program && resolved.reference.owner !== edge.requiredBy.owner,
+      },
+    ];
+  });
 }

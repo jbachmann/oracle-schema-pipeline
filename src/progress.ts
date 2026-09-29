@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import type { ObjectReference } from './model.js';
 
 export type QueryCategory =
+  | 'synonyms'
   | 'program-metadata'
   | 'program-ddl'
   | 'program-dependencies'
@@ -62,6 +63,11 @@ export function progressErrorCode(error: unknown): string {
 
   const code = error.code;
   switch (code) {
+    case 'SYNONYM_METADATA_UNAVAILABLE':
+    case 'UNRESOLVED_SYNONYM_TARGET':
+    case 'SYNONYM_CYCLE':
+    case 'UNSUPPORTED_SYNONYM':
+
     case 'INVALID_SEQUENCE':
     case 'PROGRAM_METADATA_UNAVAILABLE':
     case 'CATALOG_UNKNOWN_VALUE':

@@ -1,3 +1,4 @@
+import { synonymChecks } from '../src/synonyms.js';
 import { isIncluded } from '../src/dependencies.js';
 import { catalogUnitType } from '../src/program-sql.js';
 import { schemaOwners } from '../src/schema-owners.js';
@@ -5,7 +6,7 @@ import { indexRequirements } from '../src/index-grants.js';
 import { join } from 'node:path';
 import { PreflightProgress, type PreflightObserver } from './clone-progress.js';
 import type { CommandOptions } from './process.js';
-import type { TargetDocument } from '../src/model.js';
+import { objectKey, type TargetDocument } from '../src/model.js';
 import type { DestinationSettings } from './clone-config.js';
 import {
   childEnvironment,
@@ -27,7 +28,7 @@ export function assertLocalEndpoint(endpoint: string): void {
 export function generatedReplay(sql: string): string {
   const prefix =
     [
-      '-- Generated from oracle-schema-pipeline format 6. Includes metadata-derived program DDL.',
+      '-- Generated from oracle-schema-pipeline format 7. Includes metadata-derived program DDL.',
       'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
       'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
       'SET DEFINE OFF',
@@ -71,11 +72,26 @@ export function setupRequirements(target: TargetDocument) {
     ),
     ...target.policy.externalPrerequisites
       .filter((item) => !isIncluded(target, item))
-      .map((item) => ({
-        from: `dba_objects WHERE owner=${literal(item.reference.owner)} AND object_name=${literal(item.reference.name)} AND object_type=${literal(item.type)} AND status='VALID'`,
-        expected: 1,
-        detail: `External prerequisite ${item.type} ${label(item.reference.owner)}.${label(item.reference.name)} is missing or not VALID. Create or repair it in FREEPDB1 using prerequisiteSql.`,
-      })),
+      .map((item) => {
+        const hop =
+          item.type === 'SYNONYM'
+            ? target.synonyms
+                .flatMap((synonym) => synonym.resolution)
+                .find(
+                  (hop) =>
+                    hop.type === 'SYNONYM' &&
+                    objectKey(hop.reference) === objectKey(item.reference),
+                )
+            : undefined;
+        const from = hop?.target
+          ? `dba_synonyms WHERE owner=${literal(item.reference.owner)} AND synonym_name=${literal(item.reference.name)} AND table_owner=${literal(hop.target.owner)} AND table_name=${literal(hop.target.name)} AND db_link IS NULL`
+          : `dba_objects WHERE owner=${literal(item.reference.owner)} AND object_name=${literal(item.reference.name)} AND object_type=${literal(item.type)}${item.type === 'SYNONYM' ? '' : " AND status='VALID'"}`;
+        return {
+          from,
+          expected: 1,
+          detail: `External prerequisite ${item.type} ${label(item.reference.owner)}.${label(item.reference.name)} ${item.type === 'SYNONYM' ? 'is missing or has a different mapping' : 'is missing or not VALID'}. Create or repair it in FREEPDB1 using prerequisiteSql.`,
+        };
+      }),
   ];
 }
 export function setupChecks(target: TargetDocument): string {
@@ -87,6 +103,9 @@ export function setupChecks(target: TargetDocument): string {
 }
 export function verificationChecks(target: TargetDocument): string {
   return (
+    synonymChecks(target, 'dba')
+      .map((from) => countCheck(from, 1, 'OSP_SYNONYM_INVALID'))
+      .join('') +
     [
       ...target.tables.map((object) => ({
         ...object.reference,

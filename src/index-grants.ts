@@ -1,4 +1,4 @@
-import { isIncluded } from './dependencies.js';
+import { isIncluded, resolveDependency } from './dependencies.js';
 import {
   objectKey,
   qualifiedName,
@@ -27,7 +27,8 @@ export function indexRequirements(document: TargetDocument): {
   for (const table of document.tables) {
     for (const index of table.indexes) {
       const dependencyTypes = new Map<string, Set<string>>();
-      for (const edge of index.dependencies) {
+      for (const original of index.dependencies) {
+        const edge = resolveDependency(document, original);
         const key = JSON.stringify([
           objectKey(edge.reference),
           edge.databaseLink,
@@ -36,7 +37,8 @@ export function indexRequirements(document: TargetDocument): {
         types.add(edge.type);
         dependencyTypes.set(key, types);
       }
-      for (const edge of index.dependencies) {
+      for (const original of index.dependencies) {
+        const edge = resolveDependency(document, original);
         const error = (code: string, message: string) =>
           diagnostics.push({
             severity: 'error',
@@ -73,12 +75,15 @@ export function indexRequirements(document: TargetDocument): {
           objectKey(item.reference) === objectKey(edge.reference);
         if (
           !isIncluded(document, edge) &&
-          (!document.prerequisites.some(
-            (item) =>
-              matches(item) &&
-              item.databaseLink === null &&
-              objectKey(item.requiredBy) === objectKey(table.reference),
-          ) ||
+          ((!(original.type === 'SYNONYM' && isIncluded(document, original)) &&
+            !document.prerequisites
+              .map((edge) => resolveDependency(document, edge))
+              .some(
+                (item) =>
+                  matches(item) &&
+                  item.databaseLink === null &&
+                  objectKey(item.requiredBy) === objectKey(table.reference),
+              )) ||
             !document.policy.externalPrerequisites.some(matches))
         ) {
           error(

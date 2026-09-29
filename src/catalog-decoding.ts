@@ -10,6 +10,10 @@ import oracle, { type BindParameters, type Connection } from 'oracledb';
 import { z } from 'zod';
 
 export type CatalogErrorCode =
+  | 'SYNONYM_METADATA_UNAVAILABLE'
+  | 'UNRESOLVED_SYNONYM_TARGET'
+  | 'SYNONYM_CYCLE'
+  | 'UNSUPPORTED_SYNONYM'
   | 'INVALID_SEQUENCE'
   | 'PROGRAM_METADATA_UNAVAILABLE'
   | 'CATALOG_UNKNOWN_VALUE'

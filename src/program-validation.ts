@@ -1,3 +1,4 @@
+import { validateSynonyms } from './synonyms.js';
 import { allPrerequisites, includedType } from './dependencies.js';
 import { sequenceError } from './sequences.js';
 import {
@@ -10,7 +11,7 @@ import {
 export function validateProgramsAndSequences(
   document: TargetDocument,
 ): Diagnostic[] {
-  const diagnostics: Diagnostic[] = [];
+  const diagnostics: Diagnostic[] = validateSynonyms(document);
   const error = (code: string, object: string, message: string) =>
     diagnostics.push({ severity: 'error', code, object, message });
   const seen = new Set<string>();
@@ -19,6 +20,7 @@ export function validateProgramsAndSequences(
     ...document.views,
     ...document.programs,
     ...document.sequences,
+    ...document.synonyms,
   ]) {
     const key = objectKey(item.reference);
     if (seen.has(key))
@@ -34,6 +36,7 @@ export function validateProgramsAndSequences(
     ['PROCEDURE', document.targetProcedures],
     ['FUNCTION', document.targetFunctions],
     ['SEQUENCE', document.targetSequences],
+    ['SYNONYM', document.targetSynonyms],
   ] as const) {
     const keys = new Set<string>();
     for (const root of roots) {
@@ -51,14 +54,16 @@ export function validateProgramsAndSequences(
           `Selected ${kind} definition is absent.`,
         );
     }
-    for (const item of kind === 'SEQUENCE'
-      ? document.sequences
-      : document.programs.filter((p) => p.kind === kind)) {
+    for (const item of kind === 'SYNONYM'
+      ? document.synonyms
+      : kind === 'SEQUENCE'
+        ? document.sequences
+        : document.programs.filter((p) => p.kind === kind)) {
       if (!keys.has(objectKey(item.reference)))
         error(
           'MISSING_TARGET',
           qualifiedName(item.reference),
-          'Programs and sequences must be explicitly selected.',
+          'Programs, sequences and synonyms must be explicitly selected.',
         );
     }
   }

@@ -15,6 +15,7 @@ import { memberRowSchema } from './catalog-schemas.js';
 
 export type CatalogScope = 'all' | 'dba';
 const catalogViews = {
+  synonyms: { all: 'all_synonyms', dba: 'dba_synonyms' },
   sequences: { all: 'all_sequences', dba: 'dba_sequences' },
   constraints: { all: 'all_constraints', dba: 'dba_constraints' },
   consColumns: { all: 'all_cons_columns', dba: 'dba_cons_columns' },

@@ -411,13 +411,13 @@ transformation produces a target and report with blocking diagnostics. Some
 unrepresentable or inaccessible catalog metadata fails extraction itself explicitly.
 
 No application rows, view comments, schema comments,
-triggers, synonyms, jobs, security policies, comments on other
+triggers, jobs, security policies, comments on other
 object types, original grants, statistics, or full
 physical configuration are exported. System-managed LOB indexes and generated
 hidden columns are not emitted as independent objects. This version reconstructs
 a supported relational slice; it is not a universal database backup.
 
-Source and target artifacts older than format 6 are rejected; re-extract them.
+Source and target artifacts older than format 7 are rejected; re-extract them.
 The object-selection document remains version 2.
 
 ## Diagnostics and file behavior
@@ -839,11 +839,11 @@ The disposable operational integration suite is opt-in:
 checkout/config, listener 1529, and refuses pre-existing operational resources.
 It cleans up only the operational resources it creates; CI also tears down the test project.
 
-## Selected programs and sequences (format 6)
+## Selected programs and sequences (format 7)
 
-Selection version 2 also accepts optional `packages`, `procedures`, `functions`
-and `sequences` arrays, each containing exact `{ "owner": "APP", "name": "ONE" }`
-references. At least one object across all six kinds is required; table/view-only
+Selection version 2 also accepts optional `packages`, `procedures`, `functions`,
+`sequences`, and `synonyms` arrays, each containing exact `{ "owner": "APP", "name": "ONE" }`
+references. At least one object across all seven kinds is required; table/view-only
 selection files remain valid. For example:
 
 ```json
@@ -897,7 +897,53 @@ selected-unit compilation before clone success. This does not test runtime behav
 Program/sequence-only owners are provisioned and verified. Dictionary workbooks
 include the new counts but keep their existing table/view scope without program DDL.
 
-Source/target documents now require **format 6**. Re-extract format-5 or older
+Source/target documents now require **format 7**. Re-extract format-6 or older
 artifacts, including retry inputs; changing the version number is not a migration.
 Policy and completion-manifest versions are unchanged. See
 [ADR 0009](docs/adr/0009-program-and-sequence-extraction.md).
+
+## Selected synonyms
+
+Add an optional `synonyms` collection to selection version 2 in `objects.json`.
+List the synonym itself, using exact catalog spelling; extraction reads its target.
+Use `PUBLIC` as the owner for public synonyms:
+
+```json
+{
+  "version": 2,
+  "tables": [{ "owner": "APP", "name": "CUSTOMERS" }],
+  "synonyms": [
+    { "owner": "REPORTING", "name": "CUSTOMERS" },
+    { "owner": "PUBLIC", "name": "CUSTOMER_LIST" }
+  ]
+}
+```
+
+Synonym-only selections are valid. Selecting an alias does **not** select its target:
+select each intermediate synonym and terminal object separately, or acknowledge
+and provision them with the existing external-prerequisite policy. External setup
+requires `createSchemas: false`. Existing table/view dependency closure is unchanged.
+
+Extraction uses ALL/DBA synonym and object catalogs, retaining the exact mapping,
+editionability, and resolved local chain. Missing or inaccessible targets, loops,
+database links (including intermediate links), unsupported target types, selected
+Oracle-maintained aliases, common objects, and edition-specific definitions fail
+closed. Terminals must be tables, views, sequences, packages, procedures or functions.
+PUBLIC fallback through a missing schema object requires DBA catalog scope: absence
+in ALL_OBJECTS alone cannot prove that a private object does not shadow the alias.
+
+Generated SQL creates aliases before tables, views and programs, without
+`OR REPLACE`. PUBLIC is never provisioned as a user. Consumers follow recorded
+underlying dependencies; narrow grants apply to underlying objects. Synonym
+creation does not grant access. Early-created synonyms may remain marked INVALID
+until resolution; verification checks mappings and underlying targets. Cross-owner
+program access still requires operator
+setup, and explicit synonym dependency facts in views need selected alias metadata
+to establish their target type. SQL text is preserved, not parsed for alias usage.
+
+Replay verifies exact mappings, terminal-object validity and PUBLIC fallback
+shadowing (requiring DBA catalog visibility for the absence check); the local clone helper independently checks the same facts in DBA
+catalogs. Redirected aliases and missing grants fail the relevant verification or
+program-compilation gate. These checks do not execute application routines or prove
+dynamic SQL behavior. Format 7 is required for source, target, and retry artifacts;
+re-extract older documents.
