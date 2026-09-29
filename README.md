@@ -1,8 +1,8 @@
 # Oracle schema pipeline — TypeScript
 
 A catalog-driven exporter with a versioned JSON intermediate representation.
-The source database is queried for facts, not for CREATE/ALTER statements.
-No DBMS_METADATA.GET_DDL, DDL string rewriting, source staging tables, or DBMS_OUTPUT
+Tables, views and sequences use catalog facts; explicitly selected programs use
+DBMS_METADATA.GET_DDL. No DDL string rewriting, source staging tables, or DBMS_OUTPUT
 is used. Within the core pipeline only extraction connects to Oracle. The separate
 `db:clone` orchestrator also provisions and verifies its disposable local destination
 ([ADR 0008](docs/adr/0008-disposable-local-destination-orchestration.md)).
@@ -397,7 +397,7 @@ Generation rejects, rather than approximates:
 - IOTs, partitioning, clusters, nested/secondary tables, temporary/external/object
   tables, materialized-view storage, encrypted columns and Oracle-maintained tables.
 - Custom/unknown datatypes, explicit nondefault collations, domain/partitioned
-  indexes, unusable indexes, cross-owner indexes and internal SYS_OP_* index
+  indexes, unusable indexes and internal SYS_OP_* index
   expressions. Some descending indexes expose such expressions and need an
   additional normalization implementation before this version can reproduce them.
 - Disabled PK/UK index lifecycle cases and unusual supporting indexes. Supporting
@@ -410,14 +410,14 @@ Unsupported structures can still appear in source JSON, with recorded features;
 transformation produces a target and report with blocking diagnostics. Some
 unrepresentable or inaccessible catalog metadata fails extraction itself explicitly.
 
-No application rows, view comments, schema comments, standalone sequences,
-triggers, stored programs, synonyms, jobs, security policies, comments on other
+No application rows, view comments, schema comments,
+triggers, synonyms, jobs, security policies, comments on other
 object types, original grants, statistics, or full
 physical configuration are exported. System-managed LOB indexes and generated
 hidden columns are not emitted as independent objects. This version reconstructs
 a supported relational slice; it is not a universal database backup.
 
-Format v2 source and target artifacts are intentionally rejected; re-extract them.
+Source and target artifacts older than format 6 are rejected; re-extract them.
 The object-selection document remains version 2.
 
 ## Diagnostics and file behavior
@@ -838,3 +838,66 @@ The disposable operational integration suite is opt-in:
 `ORACLE_LOCAL_CLONE_INTEGRATION=1 npm run test:integration`. It uses a temporary
 checkout/config, listener 1529, and refuses pre-existing operational resources.
 It cleans up only the operational resources it creates; CI also tears down the test project.
+
+## Selected programs and sequences (format 6)
+
+Selection version 2 also accepts optional `packages`, `procedures`, `functions`
+and `sequences` arrays, each containing exact `{ "owner": "APP", "name": "ONE" }`
+references. At least one object across all six kinds is required; table/view-only
+selection files remain valid. For example:
+
+```json
+{
+  "version": 2,
+  "packages": [{ "owner": "APP", "name": "COUNTER_API" }],
+  "procedures": [{ "owner": "APP", "name": "PING" }],
+  "functions": [{ "owner": "APP", "name": "ONE" }],
+  "sequences": [{ "owner": "APP", "name": "COUNTER_SEQ" }]
+}
+```
+
+A package selection includes its specification and existing body. Extraction reads
+full DBMS_METADATA DDL as the owner or, with `--catalog-scope dba`, an authorized
+catalog reader with enabled SELECT_CATALOG_ROLE (or SYS authority). Ordinary EXECUTE grants do not establish
+complete body visibility. Missing/inaccessible metadata fails extraction; there is
+no privilege elevation or source-text fallback. Source programs are never compiled
+or executed. The DDL is trusted executable input and reaches clone.sql unchanged;
+exclude programs containing embedded credentials from published artifacts. Existing
+2,400-byte SQL line limits still apply. Direct SQL*Plus users must configure an
+AL32UTF8 client to preserve Unicode; local clone orchestration does this explicitly.
+
+Programs do not expand the selection. Included typed definitions satisfy modeled
+prerequisites; unselected application dependencies must be acknowledged through
+`externalPrerequisites` with `createSchemas=false` and provisioned through the
+existing `prerequisiteSql` workflow. Cross-owner program access likewise needs
+operator-provided direct grants: catalog dependencies cannot identify required DML
+privileges. Known cross-owner table expressions receive the narrowly required
+sequence SELECT or program EXECUTE grant. Oracle-maintained references are
+recorded as platform requirements.
+Dynamic SQL and runtime/environment behavior are outside the guarantee. The
+pinned Oracle catalog also omits some virtual-column function dependencies.
+Such relationships need explicit prerequisite facts in the reviewable document
+and any required operator setup; selection alone cannot discover them. SQL text
+is not parsed to guess missing dependencies.
+
+Sequence bounds, increments and caches remain exact integers. Ascending sequences
+restart at their minimum; descending sequences restart at their maximum, reported
+as `SEQUENCE_POSITION_RESET`. Neither the current position nor a historical custom
+start is preserved, and extraction never calls NEXTVAL. Supported conventional,
+scale/extend, session and keep options are preserved where valid. Sharded sequences,
+Oracle-maintained/application-common variants, explicit identity backing sequences
+and unverified combinations fail closed. Identities retain their existing handling.
+
+Generation orders modeled dependencies, permits pure program cycles, and rejects
+mixed creation cycles. Package-body cycles can use the previously created
+specifications; mutually recursive standalone units that Oracle cannot compile
+without temporary stubs still fail validity checks. The pipeline does not invent
+stub DDL. Selected units must all exist and be VALID after bounded,
+selected-unit compilation before clone success. This does not test runtime behavior.
+Program/sequence-only owners are provisioned and verified. Dictionary workbooks
+include the new counts but keep their existing table/view scope without program DDL.
+
+Source/target documents now require **format 6**. Re-extract format-5 or older
+artifacts, including retry inputs; changing the version number is not a migration.
+Policy and completion-manifest versions are unchanged. See
+[ADR 0009](docs/adr/0009-program-and-sequence-extraction.md).

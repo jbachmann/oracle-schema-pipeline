@@ -8,6 +8,7 @@ import {
   commentRowSchema,
   constraintRowSchema,
   dependencyRowSchema,
+  prerequisiteRowSchema,
   identityRowSchema,
   indexRowSchema,
   orderedColumnRowSchema,
@@ -20,9 +21,9 @@ export function catalogQueries(reader: CatalogReader) {
   return {
     prerequisites: {
       category: 'prerequisites',
-      schema: dependencyRowSchema,
+      schema: prerequisiteRowSchema,
       bindNames: ['owner', 'tableName'],
-      sql: `SELECT DISTINCT d.referenced_owner, d.referenced_name, d.referenced_type, d.referenced_link_name
+      sql: `SELECT DISTINCT d.type AS prerequisite_origin, d.referenced_owner, d.referenced_name, d.referenced_type, d.referenced_link_name
         FROM ${reader.catalogView('dependencies')} d
        /* selection */
        WHERE ((d.owner=:owner AND d.name=:tableName AND d.type='TABLE') OR

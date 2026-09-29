@@ -1,3 +1,7 @@
+import { creationOrder } from './creation-order.js';
+import { compilePrograms } from './program-sql.js';
+import { renderSequence } from './sequences.js';
+import { isIncluded } from './dependencies.js';
 /**
  * Coordinates SQL preparation from parsed target metadata and semantic analysis.
  * Orders the reconstruction phases, sorts objects deterministically, and places
@@ -49,7 +53,7 @@ function orderedConstraints(table: TableDefinition) {
 function emitPreamble(document: TargetDocument, { emit }: SqlCollector): void {
   emit(
     'document',
-    `-- Generated from oracle-schema-pipeline format ${document.formatVersion}. No source DDL was replayed.`,
+    `-- Generated from oracle-schema-pipeline format ${document.formatVersion}. Includes metadata-derived program DDL.`,
     'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
     'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
     'SET DEFINE OFF',
@@ -218,7 +222,10 @@ function emitViews(views: ViewDefinition[], { emit }: SqlCollector): void {
     );
     for (const edge of dependencies) {
       if (!edge.databaseLink && edge.reference.owner !== view.reference.owner) {
-        const grant = `GRANT SELECT ON ${qualifiedName(edge.reference)} TO ${quoteIdentifier(view.reference.owner)};`;
+        const privilege = ['FUNCTION', 'PACKAGE'].includes(edge.type)
+          ? 'EXECUTE'
+          : 'SELECT';
+        const grant = `GRANT ${privilege} ON ${qualifiedName(edge.reference)} TO ${quoteIdentifier(view.reference.owner)};`;
         if (!grants.has(grant)) {
           emit(qualifiedName(view.reference), grant);
           grants.add(grant);
@@ -241,7 +248,81 @@ export function prepareSql(
 
   emitPreamble(document, collector);
   emitSchemas(document, collector);
-  emitTables(tables, document.policy, collector);
+  for (const sequence of [...document.sequences].sort((a, b) =>
+    compareOrdinal(objectKey(a.reference), objectKey(b.reference)),
+  )) {
+    const name = qualifiedName(sequence.reference);
+    collector.emit(
+      name,
+      collector.attemptRender('INVALID_SEQUENCE', name, () =>
+        renderSequence(sequence),
+      ),
+    );
+  }
+  const sequenceGrants = new Set<string>();
+  for (const edge of document.prerequisites) {
+    if (
+      edge.type === 'SEQUENCE' &&
+      isIncluded(document, edge) &&
+      edge.reference.owner !== edge.requiredBy.owner &&
+      document.tables.some(
+        (table) => objectKey(table.reference) === objectKey(edge.requiredBy),
+      )
+    )
+      sequenceGrants.add(
+        `GRANT SELECT ON ${qualifiedName(edge.reference)} TO ${quoteIdentifier(edge.requiredBy.owner)};`,
+      );
+  }
+  for (const sql of [...sequenceGrants].sort()) collector.emit('document', sql);
+  if (document.programs.length) {
+    try {
+      for (const group of creationOrder(document)) {
+        const programs = group.flatMap((node) =>
+          node.kind === 'program' ? [node.value] : [],
+        );
+        // Specifications across a recursive group precede all bodies.
+        for (const body of [false, true])
+          for (const program of programs) {
+            for (const unit of program.units)
+              if ((unit.type === 'PACKAGE_BODY') === body)
+                collector.emit(qualifiedName(program.reference), unit.ddl);
+          }
+        if (programs.length)
+          collector.emit('programs', compilePrograms(programs));
+        for (const node of group) {
+          if (node.kind === 'table') {
+            const grants = new Set(
+              document.prerequisites
+                .filter(
+                  (edge) =>
+                    objectKey(edge.requiredBy) ===
+                      objectKey(node.value.reference) &&
+                    edge.origin !== 'INDEX' &&
+                    ['FUNCTION', 'PACKAGE'].includes(edge.type) &&
+                    isIncluded(document, edge) &&
+                    edge.reference.owner !== edge.requiredBy.owner,
+                )
+                .map(
+                  (edge) =>
+                    `GRANT EXECUTE ON ${qualifiedName(edge.reference)} TO ${quoteIdentifier(edge.requiredBy.owner)};`,
+                ),
+            );
+            for (const grant of [...grants].sort())
+              collector.emit(qualifiedName(node.value.reference), grant);
+            emitTables([node.value], document.policy, collector);
+          }
+          if (node.kind === 'view') emitViews([node.value], collector);
+        }
+      }
+    } catch {
+      collector.result.diagnostics.push({
+        severity: 'error',
+        code: 'UNSUPPORTED_CREATION_CYCLE',
+        object: 'document',
+        message: 'Dependency cycle includes a table expression or view.',
+      });
+    }
+  } else emitTables(tables, document.policy, collector);
   emitComments(tables, collector);
   for (const grant of indexRequirements(document).grants) {
     collector.emit(qualifiedName(grant.reference), renderIndexGrant(grant));
@@ -250,7 +331,45 @@ export function prepareSql(
   emitLocalConstraints(tables, collector);
   emitReferenceGrants(tables, collector);
   emitForeignKeys(tables, collector);
-  emitViews(analysis.orderedViews, collector);
+  if (!document.programs.length) emitViews(analysis.orderedViews, collector);
+  // Adding table constraints can invalidate already-created views and programs.
+  // Revisit the same dependency order after those mutations, compiling only invalid units.
+  if (document.programs.length) {
+    try {
+      for (const group of creationOrder(document)) {
+        for (const node of group)
+          if (node.kind === 'view') {
+            const reference = node.value.reference;
+            const literal = (value: string) =>
+              `'${value.replaceAll("'", "''")}'`;
+            collector.emit(
+              qualifiedName(reference),
+              `DECLARE n NUMBER; BEGIN
+  SELECT COUNT(*) INTO n FROM ALL_OBJECTS WHERE owner=${literal(reference.owner)} AND object_name=${literal(reference.name)} AND object_type='VIEW' AND status='INVALID';
+  IF n > 0 THEN EXECUTE IMMEDIATE ${literal(`ALTER VIEW ${qualifiedName(reference)} COMPILE`)}; END IF;
+END;
+/`,
+            );
+          }
+        const programs = group.flatMap((node) =>
+          node.kind === 'program' ? [node.value] : [],
+        );
+        if (programs.length)
+          collector.emit('programs', compilePrograms(programs));
+      }
+    } catch {
+      /* The creation pass already reports unsupported cycles. */
+    }
+  }
+  if (document.programs.length)
+    collector.emit(
+      'programs',
+      compilePrograms(
+        [...document.programs].sort((a, b) =>
+          compareOrdinal(objectKey(a.reference), objectKey(b.reference)),
+        ),
+      ),
+    );
   collector.emit('document', 'PROMPT Schema reconstruction completed.');
   return collector.result;
 }

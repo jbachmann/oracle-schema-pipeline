@@ -1,3 +1,7 @@
+import { CatalogError, catalogFailure } from './catalog-decoding.js';
+import { readProgram } from './catalog-programs.js';
+import { readSequence } from './catalog-sequences.js';
+import type { ProgramKind } from './model.js';
 /**
  * Adapts Oracle's read-only catalog metadata to the SourceCatalog interface used
  * by extraction. Each adapter shares one query reader and one constraint cache
@@ -52,6 +56,33 @@ export class OracleCatalog implements SourceCatalog {
   ) {
     this.reader = new CatalogReader(connection, scope, progress, batchSize);
     this.constraints = new ConstraintReader(this.reader);
+  }
+
+  async program(reference: ObjectReference, kind: ProgramKind) {
+    try {
+      return await readProgram(this.reader, reference, kind);
+    } catch (error) {
+      if (error instanceof CatalogError) throw error;
+      catalogFailure(
+        'PROGRAM_METADATA_UNAVAILABLE',
+        qualifiedName(reference),
+        kind,
+        'Complete program metadata could not be read. Check catalog privileges and object type.',
+      );
+    }
+  }
+  async sequence(reference: ObjectReference) {
+    try {
+      return await readSequence(this.reader, reference);
+    } catch (error) {
+      if (error instanceof CatalogError) throw error;
+      catalogFailure(
+        'INVALID_SEQUENCE',
+        qualifiedName(reference),
+        'sequence',
+        'Sequence metadata could not be read. Check privileges, object type and identity ownership.',
+      );
+    }
   }
 
   async foreignKeys(table: ObjectReference): Promise<ForeignKeyDefinition[]> {
@@ -254,11 +285,13 @@ export class OracleCatalog implements SourceCatalog {
         'REFERENCED_NAME',
         'REFERENCED_TYPE',
         'REFERENCED_LINK_NAME',
+        'PREREQUISITE_ORIGIN',
       ],
       qualifiedName(table),
     );
     return rows.map((row) => ({
       requiredBy: table,
+      origin: row.PREREQUISITE_ORIGIN,
       reference: {
         owner: row.REFERENCED_OWNER ?? 'PUBLIC',
         name: row.REFERENCED_NAME,

@@ -10,6 +10,8 @@ import oracle, { type BindParameters, type Connection } from 'oracledb';
 import { z } from 'zod';
 
 export type CatalogErrorCode =
+  | 'INVALID_SEQUENCE'
+  | 'PROGRAM_METADATA_UNAVAILABLE'
   | 'CATALOG_UNKNOWN_VALUE'
   | 'CATALOG_CARDINALITY'
   | 'CATALOG_INCOMPLETE_METADATA';
@@ -43,11 +45,13 @@ export async function catalogRows<S extends z.ZodTypeAny>(
   schema: S,
   sql: string,
   binds: BindParameters = {},
+  clobAsString = false,
 ): Promise<z.infer<S>[]> {
   const context = Object.values(binds).join('.') || 'database';
   const result = await connection.execute<unknown>(sql, binds, {
     outFormat: oracle.OUT_FORMAT_OBJECT,
     resultSet: true,
+    ...(clobAsString ? { fetchInfo: { DDL: { type: oracle.STRING } } } : {}),
   });
   const resultSet = result.resultSet;
   if (!resultSet)

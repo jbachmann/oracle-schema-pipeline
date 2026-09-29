@@ -19,10 +19,19 @@ import {
   type ViewDefinition,
   type ObjectSelection,
   sourceDocumentSchema,
+  selectionSchema,
+  type ProgramDefinition,
+  type ProgramKind,
+  type SequenceDefinition,
 } from './model.js';
 
 /** Read-only catalog metadata used to extract tables and optional views. */
 export interface SourceCatalog {
+  program?(
+    reference: ObjectReference,
+    kind: ProgramKind,
+  ): Promise<ProgramDefinition>;
+  sequence?(reference: ObjectReference): Promise<SequenceDefinition>;
   prefetchForeignKeys?(references: ObjectReference[]): Promise<void>;
   prefetchTables?(references: ObjectReference[]): Promise<void>;
   prefetchViews?(references: ObjectReference[]): Promise<void>;
@@ -57,8 +66,41 @@ async function extract(
   selection: ObjectSelection,
   progress: ExtractionProgress,
 ): Promise<SourceDocument> {
-  const targetTables = uniqueReferences(selection.tables);
-  const targetViews = uniqueReferences(selection.views);
+  const parsed = selectionSchema.parse(selection);
+  const targetPackages = uniqueReferences(parsed.packages);
+  const targetProcedures = uniqueReferences(parsed.procedures);
+  const targetFunctions = uniqueReferences(parsed.functions);
+  const targetSequences = uniqueReferences(parsed.sequences);
+  const programs: ProgramDefinition[] = [];
+  const sequences: SequenceDefinition[] = [];
+  for (const [kind, refs] of [
+    ['PACKAGE', targetPackages],
+    ['PROCEDURE', targetProcedures],
+    ['FUNCTION', targetFunctions],
+  ] as const) {
+    for (const ref of refs) {
+      if (!catalog.program)
+        throw new Error(
+          'PROGRAM_METADATA_UNAVAILABLE: Catalog does not support programs.',
+        );
+      programs.push(
+        await progress.measure('object', () => catalog.program!(ref, kind), {
+          object: ref,
+        }),
+      );
+    }
+  }
+  for (const ref of targetSequences) {
+    if (!catalog.sequence)
+      throw new Error('INVALID_SEQUENCE: Catalog does not support sequences.');
+    sequences.push(
+      await progress.measure('object', () => catalog.sequence!(ref), {
+        object: ref,
+      }),
+    );
+  }
+  const targetTables = uniqueReferences(parsed.tables);
+  const targetViews = uniqueReferences(parsed.views);
   const targetTableKeys = new Set(targetTables.map(objectKey));
   const { views, tableReferences: viewTableReferences } = await extractViews(
     catalog,
@@ -109,13 +151,19 @@ async function extract(
   // Check the assembled document's shape at the stage boundary. Semantic checks
   // against target policy belong to downstream validation.
   return sourceDocumentSchema.parse({
-    formatVersion: 5,
+    formatVersion: 6,
     kind: 'source',
     dialect: 'oracle',
     sourceVersion: await catalog.databaseVersion(),
     extractedAt: new Date().toISOString(),
     targetTables,
     targetViews,
+    targetPackages,
+    targetProcedures,
+    targetFunctions,
+    targetSequences,
+    programs,
+    sequences,
     tables,
     views,
     prerequisites,
@@ -187,7 +235,7 @@ async function extractViews(
       }
       if (edge.type === 'VIEW') {
         pendingViews.push(edge.reference);
-      } else {
+      } else if (edge.type === 'TABLE') {
         viewTableReferences.push(edge.reference);
       }
     }

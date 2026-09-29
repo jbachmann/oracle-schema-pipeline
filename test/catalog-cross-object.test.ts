@@ -91,6 +91,17 @@ for (const count of [0, 1, 31, 32, 33, 65, 74]) {
       const executions: number[] = [];
       for (const size of [1, 32]) {
         const transport = inspect(benchmarkConnection(workload).connection);
+        if (count === 0) {
+          await assert.rejects(
+            extractSource(
+              new OracleCatalog(transport.connection, 'dba', undefined, size),
+              selection,
+            ),
+            /At least one object/,
+          );
+          assert.equal(transport.counts().executes, 0);
+          continue;
+        }
         sources.push(
           await extractSource(
             new OracleCatalog(transport.connection, 'dba', undefined, size),
@@ -109,6 +120,7 @@ for (const count of [0, 1, 31, 32, 33, 65, 74]) {
           }
         }
       }
+      if (count === 0) return;
       assert.deepEqual(withoutTime(sources[1]), withoutTime(sources[0]));
       assert.equal(sources[1][kind].length, count);
       if (count > 1) assert.ok(executions[1] < executions[0]);

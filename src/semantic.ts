@@ -138,11 +138,11 @@ export function analyzeTarget(document: TargetDocument) {
         } else if (edge.type === 'VIEW') {
           dependencies.add(dependency);
         }
-      } else {
+      } else if (!['FUNCTION', 'PACKAGE'].includes(edge.type)) {
         error(
           'UNSUPPORTED_VIEW_DEPENDENCY',
           viewName,
-          'Only TABLE and VIEW dependencies are supported.',
+          'Only TABLE, VIEW, FUNCTION and PACKAGE dependencies are supported.',
         );
       }
     }

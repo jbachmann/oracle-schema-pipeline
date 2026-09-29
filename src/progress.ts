@@ -9,6 +9,10 @@ import { randomUUID } from 'node:crypto';
 import type { ObjectReference } from './model.js';
 
 export type QueryCategory =
+  | 'program-metadata'
+  | 'program-ddl'
+  | 'program-dependencies'
+  | 'sequences'
   | 'database-version'
   | 'constraints'
   | 'constraint-columns'
@@ -58,6 +62,8 @@ export function progressErrorCode(error: unknown): string {
 
   const code = error.code;
   switch (code) {
+    case 'INVALID_SEQUENCE':
+    case 'PROGRAM_METADATA_UNAVAILABLE':
     case 'CATALOG_UNKNOWN_VALUE':
     case 'CATALOG_CARDINALITY':
     case 'CATALOG_INCOMPLETE_METADATA':

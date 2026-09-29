@@ -104,6 +104,10 @@ export const dependencyRowSchema = z.object({
   REFERENCED_LINK_NAME: nullableText,
 });
 
+export const prerequisiteRowSchema = dependencyRowSchema.extend({
+  PREREQUISITE_ORIGIN: z.enum(['TABLE', 'INDEX']),
+});
+
 export const databaseVersionRowSchema = z.object({ VERSION: text });
 
 export const orderedColumnRowSchema = z.object({

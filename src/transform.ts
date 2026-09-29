@@ -38,6 +38,12 @@ export function transformSource(
     tables: results.map((result) => result.table),
     diagnostics: [
       ...source.diagnostics,
+      ...source.sequences.map((sequence): Diagnostic => ({
+        severity: 'change',
+        code: 'SEQUENCE_POSITION_RESET',
+        object: qualifiedName(sequence.reference),
+        message: `Restart at ${BigInt(sequence.incrementBy) > 0n ? sequence.minValue : sequence.maxValue}; source position and historical start are not preserved.`,
+      })),
       ...results.flatMap((result) => result.changes),
     ],
   });

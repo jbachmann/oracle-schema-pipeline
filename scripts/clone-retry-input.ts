@@ -72,14 +72,14 @@ export async function prepareRetryInput(input: string, directory: string) {
     sql = generatedReplay(decode(artifacts[0].contents));
   } catch {
     throw new RetryInputError(
-      'clone.sql must be UTF-8 with the supported generated preamble.',
+      'clone.sql must be UTF-8 with the format 6 generated preamble; re-extract older artifacts.',
     );
   }
   try {
     target = assertValidTarget(JSON.parse(decode(artifacts[1].contents)));
   } catch {
     throw new RetryInputError(
-      'target.json must use the current format and pass target validation.',
+      'target.json must use format 6 and pass target validation; re-extract older artifacts.',
     );
   }
   try {

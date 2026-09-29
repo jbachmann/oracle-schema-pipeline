@@ -1,3 +1,5 @@
+import { allPrerequisites, isIncluded } from './dependencies.js';
+import { validateProgramsAndSequences } from './program-validation.js';
 import { indexRequirements } from './index-grants.js';
 import { analyzeTarget } from './semantic.js';
 import { prepareSql } from './prepare.js';
@@ -24,7 +26,10 @@ function validateParsedTarget(document: TargetDocument) {
     diagnostics.push({ severity: 'error', code, object, message });
   };
   const analysis = analyzeTarget(document);
-  diagnostics.push(...analysis.diagnostics);
+  diagnostics.push(
+    ...analysis.diagnostics,
+    ...validateProgramsAndSequences(document),
+  );
   const { tablesByKey } = analysis;
   const targetKeys = new Set(document.targetTables.map(objectKey));
   const constraintNames = new Set<string>();
@@ -374,7 +379,7 @@ function validatePrerequisites(
   document: TargetDocument,
   error: ReportError,
 ): void {
-  for (const prerequisite of document.prerequisites) {
+  for (const prerequisite of allPrerequisites(document)) {
     const allowed = document.policy.externalPrerequisites.some(
       (item) =>
         item.type === prerequisite.type &&
@@ -386,7 +391,10 @@ function validatePrerequisites(
         qualifiedName(prerequisite.requiredBy),
         'Remote dependencies are unsupported.',
       );
-    } else if (!allowed) {
+    } else if (
+      !allowed &&
+      (!isIncluded(document, prerequisite) || prerequisite.directAccess)
+    ) {
       error(
         'UNACKNOWLEDGED_PREREQUISITE',
         qualifiedName(prerequisite.requiredBy),

@@ -1,3 +1,5 @@
+import { isIncluded } from '../src/dependencies.js';
+import { catalogUnitType } from '../src/program-sql.js';
 import { schemaOwners } from '../src/schema-owners.js';
 import { indexRequirements } from '../src/index-grants.js';
 import { join } from 'node:path';
@@ -25,7 +27,7 @@ export function assertLocalEndpoint(endpoint: string): void {
 export function generatedReplay(sql: string): string {
   const prefix =
     [
-      '-- Generated from oracle-schema-pipeline format 5. No source DDL was replayed.',
+      '-- Generated from oracle-schema-pipeline format 6. Includes metadata-derived program DDL.',
       'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
       'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
       'SET DEFINE OFF',
@@ -67,11 +69,13 @@ export function setupRequirements(target: TargetDocument) {
         detail: `Schema ${label(owner)} is missing, but createSchemas=false requires it to exist. Create it in FREEPDB1 using prerequisiteSql.`,
       }),
     ),
-    ...target.policy.externalPrerequisites.map((item) => ({
-      from: `dba_objects WHERE owner=${literal(item.reference.owner)} AND object_name=${literal(item.reference.name)} AND object_type=${literal(item.type)} AND status='VALID'`,
-      expected: 1,
-      detail: `External prerequisite ${item.type} ${label(item.reference.owner)}.${label(item.reference.name)} is missing or not VALID. Create or repair it in FREEPDB1 using prerequisiteSql.`,
-    })),
+    ...target.policy.externalPrerequisites
+      .filter((item) => !isIncluded(target, item))
+      .map((item) => ({
+        from: `dba_objects WHERE owner=${literal(item.reference.owner)} AND object_name=${literal(item.reference.name)} AND object_type=${literal(item.type)} AND status='VALID'`,
+        expected: 1,
+        detail: `External prerequisite ${item.type} ${label(item.reference.owner)}.${label(item.reference.name)} is missing or not VALID. Create or repair it in FREEPDB1 using prerequisiteSql.`,
+      })),
   ];
 }
 export function setupChecks(target: TargetDocument): string {
@@ -88,6 +92,16 @@ export function verificationChecks(target: TargetDocument): string {
         ...object.reference,
         type: 'TABLE',
       })),
+      ...target.sequences.map((object) => ({
+        ...object.reference,
+        type: 'SEQUENCE',
+      })),
+      ...target.programs.flatMap((object) =>
+        object.units.map((unit) => ({
+          ...object.reference,
+          type: catalogUnitType(unit.type),
+        })),
+      ),
       ...target.views.map((object) => ({ ...object.reference, type: 'VIEW' })),
       ...target.tables.flatMap((table) =>
         table.indexes.map((index) => ({ ...index.reference, type: 'INDEX' })),
@@ -97,6 +111,15 @@ export function verificationChecks(target: TargetDocument): string {
         countCheck(
           `dba_objects WHERE owner=${literal(object.owner)} AND object_name=${literal(object.name)} AND object_type=${literal(object.type)} AND status='VALID'`,
           1,
+        ),
+      )
+      .join('') +
+    target.programs
+      .filter((program) => program.kind === 'PACKAGE')
+      .map((program) =>
+        countCheck(
+          `dba_objects WHERE owner=${literal(program.reference.owner)} AND object_name=${literal(program.reference.name)} AND object_type='PACKAGE BODY'`,
+          program.units.some((unit) => unit.type === 'PACKAGE_BODY') ? 1 : 0,
         ),
       )
       .join('') +
@@ -369,7 +392,16 @@ export class ComposeDestination implements Destination {
     };
     try {
       const output = await this.compose(
-        ['exec', '-T', service, 'sqlplus', '-s', '/ as sysdba'],
+        [
+          'exec',
+          '-T',
+          '-e',
+          'NLS_LANG=.AL32UTF8',
+          service,
+          'sqlplus',
+          '-s',
+          '/ as sysdba',
+        ],
         sqlSession(sql),
         undefined,
         ({ line }) => inspect(line),

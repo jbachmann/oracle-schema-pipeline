@@ -101,7 +101,7 @@ test('conflicting container identity and failed volume removal fail closed', asy
 test('generated preamble cannot override replay error handling; body remains byte-for-byte', () => {
   const prefix =
     [
-      '-- Generated from oracle-schema-pipeline format 5. No source DDL was replayed.',
+      '-- Generated from oracle-schema-pipeline format 6. Includes metadata-derived program DDL.',
       'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
       'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
       'SET DEFINE OFF',

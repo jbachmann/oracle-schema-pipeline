@@ -7,7 +7,7 @@
  * retain responsibility for opening and closing that connection.
  */
 import type { BindParameters, Connection } from 'oracledb';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { ExtractionProgress, type QueryCategory } from './progress.js';
 import { objectKey, uniqueReferences, type ObjectReference } from './model.js';
 import { catalogRows, catalogFailure } from './catalog-decoding.js';
@@ -15,6 +15,7 @@ import { memberRowSchema } from './catalog-schemas.js';
 
 export type CatalogScope = 'all' | 'dba';
 const catalogViews = {
+  sequences: { all: 'all_sequences', dba: 'dba_sequences' },
   constraints: { all: 'all_constraints', dba: 'dba_constraints' },
   consColumns: { all: 'all_cons_columns', dba: 'dba_cons_columns' },
   tables: { all: 'all_tables', dba: 'dba_tables' },
@@ -234,6 +235,59 @@ export class CatalogReader {
     );
   }
 
+  async programDdl(reference: ObjectReference, unit: string): Promise<string> {
+    if (
+      !['PACKAGE_SPEC', 'PACKAGE_BODY', 'PROCEDURE', 'FUNCTION'].includes(unit)
+    )
+      catalogFailure(
+        'PROGRAM_METADATA_UNAVAILABLE',
+        objectKey(reference),
+        'unit',
+        'Unsupported program unit type.',
+      );
+    return this.progress.measure(
+      'query',
+      async () => {
+        try {
+          await this.connection.execute(`BEGIN
+          DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'DEFAULT', TRUE);
+          DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'SQLTERMINATOR', TRUE);
+        END;`);
+          const rows = await catalogRows(
+            this.connection,
+            z.object({ DDL: z.string().min(1) }),
+            'SELECT DBMS_METADATA.GET_DDL(:unit, :name, :owner) AS ddl FROM dual',
+            { unit, name: reference.name, owner: reference.owner },
+            true,
+          );
+          if (rows.length !== 1) throw new Error('Incomplete DDL');
+          return rows[0].DDL;
+        } catch {
+          catalogFailure(
+            'PROGRAM_METADATA_UNAVAILABLE',
+            objectKey(reference),
+            unit,
+            'Require complete DBMS_METADATA access as owner or an authorized catalog reader.',
+          );
+        } finally {
+          try {
+            await this.connection.execute(
+              "BEGIN DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'DEFAULT', TRUE); END;",
+            );
+          } catch {
+            catalogFailure(
+              'PROGRAM_METADATA_UNAVAILABLE',
+              objectKey(reference),
+              unit,
+              'Cannot reset metadata session transforms.',
+            );
+          }
+        }
+      },
+      { queryCategory: 'program-ddl', object: reference },
+    );
+  }
+
   rows<S extends z.ZodTypeAny>(
     queryCategory: QueryCategory,
     schema: S,
@@ -247,7 +301,8 @@ export class CatalogReader {
       named.tableName ??
       named.viewName ??
       named.constraintName ??
-      named.indexName;
+      named.indexName ??
+      named.name;
     const object =
       typeof owner === 'string' && typeof name === 'string'
         ? { owner, name }

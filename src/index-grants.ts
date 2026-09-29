@@ -1,3 +1,4 @@
+import { isIncluded } from './dependencies.js';
 import {
   objectKey,
   qualifiedName,
@@ -71,13 +72,14 @@ export function indexRequirements(document: TargetDocument): {
           item.type === edge.type &&
           objectKey(item.reference) === objectKey(edge.reference);
         if (
-          !document.prerequisites.some(
+          !isIncluded(document, edge) &&
+          (!document.prerequisites.some(
             (item) =>
               matches(item) &&
               item.databaseLink === null &&
               objectKey(item.requiredBy) === objectKey(table.reference),
           ) ||
-          !document.policy.externalPrerequisites.some(matches)
+            !document.policy.externalPrerequisites.some(matches))
         ) {
           error(
             'UNACKNOWLEDGED_PREREQUISITE',

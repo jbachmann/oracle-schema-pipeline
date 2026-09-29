@@ -297,13 +297,17 @@ test(
       ],
       {
         env: childEnvironment(),
-        input: `WHENEVER SQLERROR EXIT 1\nALTER SESSION SET CONTAINER=FREEPDB1;\nCREATE USER CLONE_FIXTURE NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE USER CLONE_INDEX NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE TABLE CLONE_FIXTURE.T (ID NUMBER, LABEL VARCHAR2(40));\nCREATE UNIQUE INDEX CLONE_INDEX.T_PK ON CLONE_FIXTURE.T(ID);\nALTER TABLE CLONE_FIXTURE.T ADD CONSTRAINT T_PK PRIMARY KEY(ID) USING INDEX CLONE_INDEX.T_PK;\nCOMMENT ON TABLE CLONE_FIXTURE.T IS 'clone table';\nCOMMENT ON COLUMN CLONE_FIXTURE.T.LABEL IS 'clone label';\nINSERT INTO CLONE_FIXTURE.T VALUES (1, 'source row');\nCREATE VIEW CLONE_FIXTURE.V AS SELECT ID, LABEL FROM CLONE_FIXTURE.T;\nCREATE SEQUENCE CLONE_FIXTURE.EXTERNAL_SEQ;\nCREATE TABLE CLONE_FIXTURE.WITH_DEFAULT (ID NUMBER DEFAULT CLONE_FIXTURE.EXTERNAL_SEQ.NEXTVAL);\nCREATE INDEX CLONE_INDEX.DEFAULT_IX ON CLONE_FIXTURE.WITH_DEFAULT(ID);\nCOMMIT;\nEXIT\n`,
+        input: `WHENEVER SQLERROR EXIT 1\nALTER SESSION SET CONTAINER=FREEPDB1;\nCREATE USER CLONE_FIXTURE NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE USER CLONE_INDEX NO AUTHENTICATION QUOTA UNLIMITED ON USERS;\nCREATE TABLE CLONE_FIXTURE.T (ID NUMBER, LABEL VARCHAR2(40));\nCREATE UNIQUE INDEX CLONE_INDEX.T_PK ON CLONE_FIXTURE.T(ID);\nALTER TABLE CLONE_FIXTURE.T ADD CONSTRAINT T_PK PRIMARY KEY(ID) USING INDEX CLONE_INDEX.T_PK;\nCOMMENT ON TABLE CLONE_FIXTURE.T IS 'clone table';\nCOMMENT ON COLUMN CLONE_FIXTURE.T.LABEL IS 'clone label';\nINSERT INTO CLONE_FIXTURE.T VALUES (1, 'source row');\nCREATE VIEW CLONE_FIXTURE.V AS SELECT ID, LABEL FROM CLONE_FIXTURE.T;\nCREATE USER CLONE_PROGRAM NO AUTHENTICATION;\nCREATE SEQUENCE CLONE_PROGRAM.COUNTER_SEQ MINVALUE 1 MAXVALUE 999999 START WITH 500 NOCACHE;\nCREATE PACKAGE CLONE_PROGRAM.API AS FUNCTION ONE RETURN NUMBER; END;\n/\nCREATE PACKAGE BODY CLONE_PROGRAM.API AS FUNCTION ONE RETURN NUMBER AS BEGIN RETURN 1; END; END;\n/\nCREATE PROCEDURE CLONE_PROGRAM.PING AS BEGIN NULL; END;\n/\nCREATE FUNCTION CLONE_PROGRAM.ONE RETURN NUMBER AS BEGIN RETURN 1; END;\n/\nCREATE PROCEDURE CLONE_PROGRAM.BAD AS BEGIN MISSING_PROCEDURE; END;\n/\nCREATE SEQUENCE CLONE_FIXTURE.EXTERNAL_SEQ;\nCREATE TABLE CLONE_FIXTURE.WITH_DEFAULT (ID NUMBER DEFAULT CLONE_FIXTURE.EXTERNAL_SEQ.NEXTVAL);\nCREATE INDEX CLONE_INDEX.DEFAULT_IX ON CLONE_FIXTURE.WITH_DEFAULT(ID);\nCOMMIT;\nEXIT\n`,
       },
     );
     const selection = {
       version: 2,
       tables: [{ owner: 'CLONE_FIXTURE', name: 'T' }],
       views: [{ owner: 'CLONE_FIXTURE', name: 'V' }],
+      packages: [{ owner: 'CLONE_PROGRAM', name: 'API' }],
+      procedures: [{ owner: 'CLONE_PROGRAM', name: 'PING' }],
+      functions: [{ owner: 'CLONE_PROGRAM', name: 'ONE' }],
+      sequences: [{ owner: 'CLONE_PROGRAM', name: 'COUNTER_SEQ' }],
     };
     await writeFile(
       join(root, 'config/local/objects.json'),
@@ -584,10 +588,48 @@ test(
           ).rows,
           [['clone table']],
         );
+        assert.deepEqual(
+          (
+            await retryConnection.execute(
+              "SELECT object_type, status FROM dba_objects WHERE owner='CLONE_PROGRAM' ORDER BY object_type",
+            )
+          ).rows,
+          [
+            ['FUNCTION', 'VALID'],
+            ['PACKAGE', 'VALID'],
+            ['PACKAGE BODY', 'VALID'],
+            ['PROCEDURE', 'VALID'],
+            ['SEQUENCE', 'VALID'],
+          ],
+        );
+        assert.deepEqual(
+          (
+            await retryConnection.execute(
+              'SELECT CLONE_PROGRAM.ONE(), CLONE_PROGRAM.API.ONE(), CLONE_PROGRAM.COUNTER_SEQ.NEXTVAL FROM dual',
+            )
+          ).rows,
+          [[1, 1, 1]],
+        );
       } finally {
         await retryConnection.close();
       }
       assert.deepEqual(await sourceFacts(), before);
+      await writeFile(
+        join(root, 'config/local/config.json'),
+        JSON.stringify(config),
+      );
+      // Program-only clone failures must preserve artifacts for explicit repair/retry.
+      await writeFile(
+        join(root, 'config/local/objects.json'),
+        JSON.stringify({
+          version: 2,
+          procedures: [{ owner: 'CLONE_PROGRAM', name: 'BAD' }],
+        }),
+      );
+      const invalidProgram = await cloneDatabase({ root });
+      assert.equal(invalidProgram.result.status, 'failed');
+      assert.equal(invalidProgram.result.lastStage, 'replay');
+      assert.ok(invalidProgram.result.oracleErrorCodes?.includes('ORA-20001'));
       // Acknowledgement requires actual owner/sequence provisioning.
       await writeFile(
         join(root, 'config/local/objects.json'),
@@ -665,7 +707,7 @@ test(
         {
           env: childEnvironment(),
           input:
-            'ALTER SESSION SET CONTAINER=FREEPDB1;\nDROP USER CLONE_FIXTURE CASCADE;\nDROP USER CLONE_INDEX CASCADE;\nEXIT\n',
+            'ALTER SESSION SET CONTAINER=FREEPDB1;\nDROP USER CLONE_FIXTURE CASCADE;\nDROP USER CLONE_INDEX CASCADE;\nDROP USER CLONE_PROGRAM CASCADE;\nEXIT\n',
         },
       );
     }

@@ -21,13 +21,48 @@ export const selectionSchema = z
     version: z.literal(2),
     tables: z.array(objectReferenceSchema).default([]),
     views: z.array(objectReferenceSchema).default([]),
+    packages: z.array(objectReferenceSchema).default([]),
+    procedures: z.array(objectReferenceSchema).default([]),
+    functions: z.array(objectReferenceSchema).default([]),
+    sequences: z.array(objectReferenceSchema).default([]),
   })
   .strict()
   .refine(
-    (value) => value.tables.length + value.views.length > 0,
-    'At least one table or view is required.',
-  );
-export type ObjectSelection = z.infer<typeof selectionSchema>;
+    (value) =>
+      [
+        value.tables,
+        value.views,
+        value.packages,
+        value.procedures,
+        value.functions,
+        value.sequences,
+      ].some((items) => items.length > 0),
+    'At least one object is required.',
+  )
+  .superRefine((value, context) => {
+    const seen = new Set<string>();
+    for (const kind of [
+      'tables',
+      'views',
+      'packages',
+      'procedures',
+      'functions',
+      'sequences',
+    ] as const) {
+      for (const reference of uniqueReferences(value[kind])) {
+        const key = objectKey(reference);
+        if (seen.has(key))
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [kind],
+            message:
+              'OBJECT_NAME_COLLISION: Selected kinds share a schema namespace.',
+          });
+        seen.add(key);
+      }
+    }
+  });
+export type ObjectSelection = z.input<typeof selectionSchema>;
 
 export const diagnosticSchema = z
   .object({
@@ -222,6 +257,8 @@ export type ViewDefinition = z.infer<typeof viewSchema>;
 export const prerequisiteSchema = z
   .object({
     requiredBy: objectReferenceSchema,
+    // Catalog provenance distinguishes table expressions from deferred indexes.
+    origin: z.enum(['TABLE', 'INDEX']).optional(),
     reference: objectReferenceSchema,
     type: z.string(),
     databaseLink: z.string().nullable(),
@@ -229,11 +266,53 @@ export const prerequisiteSchema = z
   .strict();
 export type Prerequisite = z.infer<typeof prerequisiteSchema>;
 
+export const programKindSchema = z.enum(['PACKAGE', 'PROCEDURE', 'FUNCTION']);
+export type ProgramKind = z.infer<typeof programKindSchema>;
+export const programUnitSchema = z
+  .object({
+    type: z.enum(['PACKAGE_SPEC', 'PACKAGE_BODY', 'PROCEDURE', 'FUNCTION']),
+    ddl: z.string().min(1),
+    status: z.enum(['VALID', 'INVALID']),
+    dependencies: z.array(
+      viewDependencySchema.extend({ oracleMaintained: z.boolean() }).strict(),
+    ),
+  })
+  .strict();
+export type ProgramUnit = z.infer<typeof programUnitSchema>;
+export const programSchema = z
+  .object({
+    reference: objectReferenceSchema,
+    kind: programKindSchema,
+    units: z.array(programUnitSchema).min(1),
+    unsupportedFeatures: z.array(z.string()),
+  })
+  .strict();
+export type ProgramDefinition = z.infer<typeof programSchema>;
+const decimalIntegerSchema = z.string().regex(/^(0|-?[1-9][0-9]*)$/);
+export const sequenceSchema = z
+  .object({
+    reference: objectReferenceSchema,
+    minValue: decimalIntegerSchema,
+    maxValue: decimalIntegerSchema,
+    incrementBy: decimalIntegerSchema,
+    cacheSize: decimalIntegerSchema,
+    cycle: z.boolean(),
+    order: z.boolean(),
+    scale: z.boolean(),
+    extend: z.boolean(),
+    sharded: z.boolean(),
+    session: z.boolean(),
+    keep: z.boolean(),
+    unsupportedFeatures: z.array(z.string()),
+  })
+  .strict();
+export type SequenceDefinition = z.infer<typeof sequenceSchema>;
+
 const commonDocumentProperties = {
-  formatVersion: z.literal(5, {
+  formatVersion: z.literal(6, {
     errorMap: () => ({
       message:
-        'Expected format v5; re-extract older artifacts with this version of the pipeline.',
+        'Expected format v6; re-extract older artifacts with this version of the pipeline.',
     }),
   }),
   dialect: z.literal('oracle'),
@@ -241,6 +320,12 @@ const commonDocumentProperties = {
   extractedAt: z.string().datetime(),
   targetTables: z.array(objectReferenceSchema),
   targetViews: z.array(objectReferenceSchema),
+  targetPackages: z.array(objectReferenceSchema),
+  targetProcedures: z.array(objectReferenceSchema),
+  targetFunctions: z.array(objectReferenceSchema),
+  targetSequences: z.array(objectReferenceSchema),
+  programs: z.array(programSchema),
+  sequences: z.array(sequenceSchema),
   tables: z.array(tableSchema),
   views: z.array(viewSchema),
   prerequisites: z.array(prerequisiteSchema),
