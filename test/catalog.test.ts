@@ -601,3 +601,39 @@ test('index dependencies use exact cross-owner identity and reject incomplete ow
     /CATALOG_INCOMPLETE_METADATA.*REFERENCED_OWNER/,
   );
 });
+
+for (const batchSize of [1, 32]) {
+  test(`excluded FK metadata still fails strict decoding at batch size ${batchSize}`, async () => {
+    const { extractSource } = await import('../src/extract.js');
+    const connection = tableConnection((sql, rows) => {
+      if (sql.includes('FROM dba_constraints c'))
+        return rows.map((row) => ({
+          ...row,
+          CONSTRAINT_NAME: 'FK_VALUE',
+          CONSTRAINT_TYPE: 'R',
+          R_OWNER: 'APP',
+          R_CONSTRAINT_NAME: 'PK_PARENT',
+          PARENT_TABLE_NAME: null,
+          DELETE_RULE: 'NO ACTION',
+        }));
+      if (sql.includes('FROM dba_cons_columns')) {
+        return batchSize === 1
+          ? [{ COLUMN_NAME: 'VALUE', POSITION: 1 }]
+          : ['FK_VALUE', 'PK_PARENT'].map((name) => ({
+              MEMBER_OWNER: 'APP',
+              MEMBER_NAME: name,
+              COLUMN_NAME: 'VALUE',
+              POSITION: 1,
+            }));
+      }
+      return rows;
+    });
+    const catalog = new OracleCatalog(connection, 'dba', undefined, batchSize);
+    // Use on-demand definitions here; multi-object prefetch has separate parity coverage.
+    catalog.prefetchTables = async () => {};
+    await assert.rejects(
+      extractSource(catalog, { version: 2, tables: [reference], views: [] }),
+      /CATALOG_INCOMPLETE_METADATA/,
+    );
+  });
+}

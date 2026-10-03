@@ -143,7 +143,7 @@ for (const change of [
   () => null,
   (target: ReturnType<typeof transformSource>) => ({
     ...target,
-    formatVersion: 1,
+    formatVersion: 5,
   }),
   (target: ReturnType<typeof transformSource>) => ({
     ...target,

@@ -180,7 +180,7 @@ export type IndexDefinition = z.infer<typeof indexSchema>;
 export const tableSchema = z
   .object({
     reference: objectReferenceSchema,
-    role: z.enum(['target', 'direct-parent', 'view-dependency']),
+    role: z.literal('target'),
     comment: z.string().nullable(),
     // Features cannot be silently discarded. Nonempty entries block generation.
     unsupportedFeatures: z.array(z.string()),
@@ -230,10 +230,10 @@ export const prerequisiteSchema = z
 export type Prerequisite = z.infer<typeof prerequisiteSchema>;
 
 const commonDocumentProperties = {
-  formatVersion: z.literal(5, {
+  formatVersion: z.literal(6, {
     errorMap: () => ({
       message:
-        'Expected format v5; re-extract older artifacts with this version of the pipeline.',
+        'Expected format v6; re-extract older artifacts with this version of the pipeline.',
     }),
   }),
   dialect: z.literal('oracle'),

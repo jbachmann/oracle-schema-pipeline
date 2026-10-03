@@ -58,6 +58,7 @@ export function progressErrorCode(error: unknown): string {
 
   const code = error.code;
   switch (code) {
+    case 'UNSELECTED_VIEW_TABLE':
     case 'CATALOG_UNKNOWN_VALUE':
     case 'CATALOG_CARDINALITY':
     case 'CATALOG_INCOMPLETE_METADATA':

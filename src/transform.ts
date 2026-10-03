@@ -1,17 +1,14 @@
 /**
  * Converts extracted Oracle schema metadata into a reviewable Oracle 23 target
  * document without changing the source or connecting to a database. It attaches
- * the target policy, removes outgoing foreign keys from tables that were not
- * explicitly selected, and records those omissions and the destination storage
- * policy. The transformation report combines recorded changes with validation
- * results so callers can review issues before SQL generation.
+ * the target policy and records destination storage policy, preserving extraction
+ * omissions and retained constraints. The transformation report combines recorded
+ * changes with validation results so callers can review issues before generation.
  */
 import { indexRequirements, renderIndexGrant } from './index-grants.js';
 import {
   targetDocumentSchema,
-  objectKey,
   qualifiedName,
-  type ConstraintDefinition,
   type Diagnostic,
   type SourceDocument,
   type TableDefinition,
@@ -25,10 +22,7 @@ export function transformSource(
   source: SourceDocument,
   policy: TargetPolicy,
 ): TargetDocument {
-  const targetKeys = new Set(source.targetTables.map(objectKey));
-  const results = source.tables.map((table) =>
-    transformTable(table, targetKeys.has(objectKey(table.reference))),
-  );
+  const results = source.tables.map(transformTable);
   // Return a reviewable target even when semantic errors block SQL generation.
   const target = targetDocumentSchema.parse({
     ...source,
@@ -59,25 +53,12 @@ export function transformationReport(target: TargetDocument): Diagnostic[] {
   ];
 }
 
-function transformTable(
-  table: TableDefinition,
-  isTarget: boolean,
-): { table: TableDefinition; changes: Diagnostic[] } {
+function transformTable(table: TableDefinition): {
+  table: TableDefinition;
+  changes: Diagnostic[];
+} {
   const tableName = qualifiedName(table.reference);
   const changes: Diagnostic[] = [];
-  const constraints: ConstraintDefinition[] = [];
-  for (const constraint of table.constraints) {
-    if (!isTarget && constraint.kind === 'foreign-key') {
-      changes.push({
-        severity: 'change',
-        code: 'OMIT_PARENT_FK',
-        object: `${tableName}/${constraint.name}`,
-        message: `Omitted outgoing FK to ${qualifiedName(constraint.parentTable)} because this table is a parent-only inclusion.`,
-      });
-    } else {
-      constraints.push(constraint);
-    }
-  }
   changes.push({
     severity: 'change',
     code: 'TARGET_STORAGE',
@@ -88,8 +69,7 @@ function transformTable(
   return {
     table: {
       ...table,
-      role: isTarget ? 'target' : table.role,
-      constraints,
+      constraints: table.constraints,
     },
     changes,
   };

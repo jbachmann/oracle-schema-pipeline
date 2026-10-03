@@ -179,3 +179,125 @@ export async function assertDestinationBehavior(
     await connection.close();
   }
 }
+
+/** Seed-based partial-selection oracle, independent of exporter output. */
+export async function assertExplicitSelectionFacts(
+  connectString: string,
+  password: string,
+  count: number,
+) {
+  const connection = await oracle.getConnection({
+    user: 'SYSTEM',
+    password,
+    connectString,
+  });
+  const rows = async (sql: string) =>
+    (await connection.execute(sql, {}, { outFormat: oracle.OUT_FORMAT_ARRAY }))
+      .rows;
+  try {
+    const names = ['USER_PROFILES', 'PRINCIPALS', 'ORGANIZATIONS']
+      .slice(0, count)
+      .sort();
+    assert.deepEqual(
+      await rows(
+        "SELECT table_name FROM dba_tables WHERE owner='IAM' ORDER BY table_name",
+      ),
+      names.map((name) => [name]),
+    );
+    const expected =
+      count === 1
+        ? []
+        : [
+            [
+              'USER_PROFILES',
+              'PRINCIPAL_ID',
+              1,
+              'PRINCIPALS',
+              'PRINCIPAL_ID',
+              'CASCADE',
+            ],
+          ];
+    if (count === 3)
+      expected.unshift(
+        [
+          'ORGANIZATIONS',
+          'PARENT_ORGANIZATION_ID',
+          1,
+          'ORGANIZATIONS',
+          'ORGANIZATION_ID',
+          'NO ACTION',
+        ],
+        [
+          'PRINCIPALS',
+          'ORGANIZATION_ID',
+          1,
+          'ORGANIZATIONS',
+          'ORGANIZATION_ID',
+          'NO ACTION',
+        ],
+      );
+    assert.deepEqual(
+      await rows(`SELECT c.table_name, cc.column_name, cc.position,
+      p.table_name, pc.column_name, c.delete_rule
+      FROM dba_constraints c
+      JOIN dba_cons_columns cc ON cc.owner=c.owner AND cc.constraint_name=c.constraint_name
+      JOIN dba_constraints p ON p.owner=c.r_owner AND p.constraint_name=c.r_constraint_name
+      JOIN dba_cons_columns pc ON pc.owner=p.owner AND pc.constraint_name=p.constraint_name AND pc.position=cc.position
+      WHERE c.owner='IAM' AND c.constraint_type='R'
+      ORDER BY c.table_name, cc.position`),
+      expected,
+    );
+  } finally {
+    await connection.close();
+  }
+}
+
+/** Partial cross-owner composite FK expectations come directly from seed DDL. */
+export async function assertPartialCompositeFacts(
+  connectString: string,
+  password: string,
+) {
+  const connection = await oracle.getConnection({
+    user: 'SYSTEM',
+    password,
+    connectString,
+  });
+  const rows = async (sql: string) =>
+    (await connection.execute(sql, {}, { outFormat: oracle.OUT_FORMAT_ARRAY }))
+      .rows;
+  try {
+    assert.deepEqual(
+      await rows(`SELECT owner, table_name FROM dba_tables
+      WHERE owner IN ('IAM','CATALOG','COMMERCE','FINANCE','INDEX_SCHEMA')
+      ORDER BY owner, table_name`),
+      [
+        ['COMMERCE', 'ORDER_LINES'],
+        ['FINANCE', 'INVOICE_LINES'],
+      ],
+    );
+    assert.deepEqual(
+      await rows(`SELECT owner, table_name, constraint_name, r_owner
+      FROM dba_constraints WHERE owner IN ('COMMERCE','FINANCE') AND constraint_type='R'`),
+      [['FINANCE', 'INVOICE_LINES', 'FIN_INV_LINE_ORDER_FK', 'COMMERCE']],
+    );
+    assert.deepEqual(
+      await rows(`SELECT cc.column_name, pc.column_name, pc.position
+      FROM dba_constraints c
+      JOIN dba_cons_columns cc ON cc.owner=c.owner AND cc.constraint_name=c.constraint_name
+      JOIN dba_constraints p ON p.owner=c.r_owner AND p.constraint_name=c.r_constraint_name
+      JOIN dba_cons_columns pc ON pc.owner=p.owner AND pc.constraint_name=p.constraint_name AND pc.position=cc.position
+      WHERE c.owner='FINANCE' AND c.constraint_name='FIN_INV_LINE_ORDER_FK' ORDER BY cc.position`),
+      [
+        ['ORDER_ID', 'ORDER_ID', 1],
+        ['ORDER_LINE_NO', 'LINE_NO', 2],
+      ],
+    );
+    assert.deepEqual(
+      await rows(`SELECT owner, table_name, grantee, privilege FROM dba_tab_privs
+      WHERE owner IN ('COMMERCE','FINANCE') AND privilege='REFERENCES' ORDER BY owner, table_name, grantee`),
+      [['COMMERCE', 'ORDER_LINES', 'FINANCE', 'REFERENCES']],
+    );
+  } finally {
+    await connection.close();
+  }
+}

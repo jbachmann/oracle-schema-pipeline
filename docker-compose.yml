@@ -5,7 +5,7 @@ services:
     environment:
       ORACLE_PWD: ${CLONE_DESTINATION_PASSWORD:?Configured destination password required}
     ports:
-      - '127.0.0.1:${CLONE_DESTINATION_PORT:-1522}:1521'
+      - '127.0.0.1:${CLONE_DESTINATION_PORT:-1523}:1521'
     volumes:
       - oracle-destination-data:/opt/oracle/oradata
     healthcheck:

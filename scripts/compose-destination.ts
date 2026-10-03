@@ -25,7 +25,7 @@ export function assertLocalEndpoint(endpoint: string): void {
 export function generatedReplay(sql: string): string {
   const prefix =
     [
-      '-- Generated from oracle-schema-pipeline format 5. No source DDL was replayed.',
+      '-- Generated from oracle-schema-pipeline format 6. No source DDL was replayed.',
       'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
       'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
       'SET DEFINE OFF',

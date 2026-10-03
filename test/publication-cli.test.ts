@@ -161,7 +161,7 @@ for (const label of ['source', 'policy'] as const) {
           contents = JSON.stringify(document);
           expectedIssue =
             label === 'source'
-              ? /formatVersion: Expected format v5; re-extract older artifacts/
+              ? /formatVersion: Expected format v6; re-extract older artifacts/
               : /version: Invalid literal value/;
         }
         const path = `${label}.json`;
@@ -416,3 +416,89 @@ test('renderability failures reach reports and block generation before staging S
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+for (const progress of [false, true]) {
+  test(`unselected view tables exit 1 without publication (${progress ? 'safe progress' : 'actionable error'})`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'view-selection-cli-'));
+    try {
+      const preload = join(directory, 'catalog.mjs');
+      // Exercise the actual CLI/extractor with an offline catalog connection.
+      await writeFile(
+        preload,
+        `
+        import oracle from ${JSON.stringify(new URL('../node_modules/oracledb/index.js', import.meta.url).href)};
+        import { OracleCatalog } from ${JSON.stringify(new URL('../src/catalog.ts', import.meta.url).href)};
+        import { ordinaryView } from ${JSON.stringify(new URL('./fixtures.ts', import.meta.url).href)};
+        oracle.getConnection = async () => ({ async close() {} });
+        OracleCatalog.prototype.prefetchViews = async () => {};
+        OracleCatalog.prototype.view = async () => ordinaryView('ROOT');
+        OracleCatalog.prototype.viewDependencies = async () => [{
+          reference: { owner: 'PrivateOwner', name: 'PrivateTable' },
+          type: 'TABLE', databaseLink: null
+        }];
+      `,
+      );
+      const selection = join(directory, 'objects.json');
+      await writeFile(
+        selection,
+        JSON.stringify({
+          version: 2,
+          tables: [],
+          views: [{ owner: 'REPORTING', name: 'ROOT' }],
+        }),
+      );
+      await assert.rejects(
+        execute(
+          process.execPath,
+          [
+            '--import',
+            tsx,
+            '--import',
+            preload,
+            cli,
+            'extract',
+            '--dsn',
+            'offline/SERVICE',
+            '--user',
+            'reader',
+            '--objects',
+            selection,
+            '--output',
+            join(directory, 'source.json'),
+            ...(progress ? ['--progress-json'] : []),
+          ],
+          { env: { ...process.env, ORACLE_PASSWORD: 'offline-test-value' } },
+        ),
+        (error: unknown) => {
+          const result = error as { code: number; stderr: string };
+          assert.equal(result.code, 1);
+          if (progress) {
+            const events = result.stderr
+              .trim()
+              .split('\n')
+              .map((line) => JSON.parse(line));
+            assert.equal(events.at(-1).errorCode, 'UNSELECTED_VIEW_TABLE');
+            assert.ok(!result.stderr.includes('PrivateOwner'));
+            assert.ok(!result.stderr.includes('PrivateTable'));
+            assert.ok(!events.some((event) => event.stage === 'publication'));
+          } else {
+            assert.match(
+              result.stderr,
+              /View "REPORTING"\."ROOT" requires unselected table "PrivateOwner"\."PrivateTable"; add/,
+            );
+          }
+          assert.ok(!result.stderr.includes('offline-test-value'));
+          return true;
+        },
+      );
+      await assert.rejects(access(join(directory, 'source.json')), {
+        code: 'ENOENT',
+      });
+      await assert.rejects(access(join(directory, 'data-dictionary.xlsx')), {
+        code: 'ENOENT',
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}

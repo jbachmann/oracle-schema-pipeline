@@ -13,7 +13,6 @@ import {
   objectKey,
   qualifiedName,
   type Diagnostic,
-  type TableDefinition,
   type TargetDocument,
   type ViewDefinition,
 } from './model.js';
@@ -25,9 +24,8 @@ type ReportError = (code: string, object: string, message: string) => void;
 
 /**
  * Return object indexes, dependency closure, ordered views, and diagnostics.
- * The closure contains requested tables, their direct foreign-key parents,
- * and tables/views reached from requested views. Invalid documents still
- * produce analysis results; callers must check diagnostics before generation.
+ * The closure contains exactly requested tables and recursively reached views.
+ * Invalid documents still produce analysis results; callers must check diagnostics before generation.
  */
 export function analyzeTarget(document: TargetDocument) {
   const diagnostics: Diagnostic[] = [];
@@ -63,35 +61,16 @@ export function analyzeTarget(document: TargetDocument) {
     }
   }
 
-  const { expectedTables, directParents, reachableViews } =
-    collectDependencyClosure(
-      tableTargets,
-      viewTargets,
-      tablesByKey,
-      viewsByKey,
-    );
+  const { expectedTables, reachableViews } = collectDependencyClosure(
+    tableTargets,
+    viewTargets,
+    viewsByKey,
+  );
   for (const table of document.tables) {
     const key = objectKey(table.reference);
     const tableName = qualifiedName(table.reference);
     if (!expectedTables.has(key)) {
-      error(
-        'EXTRA_TABLE',
-        tableName,
-        'Table is outside the requested dependency closure.',
-      );
-    }
-    let expectedRole: TableDefinition['role'] = 'view-dependency';
-    if (tableTargets.has(key)) {
-      expectedRole = 'target';
-    } else if (directParents.has(key)) {
-      expectedRole = 'direct-parent';
-    }
-    if (table.role !== expectedRole) {
-      error(
-        'ROLE_MISMATCH',
-        tableName,
-        'Table role disagrees with requested dependency closure.',
-      );
+      error('EXTRA_TABLE', tableName, 'Table is not explicitly selected.');
     }
   }
   const indegree = new Map<string, number>();
@@ -175,23 +154,10 @@ export function analyzeTarget(document: TargetDocument) {
 function collectDependencyClosure(
   tableTargets: ReadonlySet<string>,
   viewTargets: ReadonlySet<string>,
-  tablesByKey: ReadonlyMap<string, TableDefinition>,
   viewsByKey: ReadonlyMap<string, ViewDefinition>,
 ) {
   const expectedTables = new Set(tableTargets);
-  const directParents = new Set<string>();
   const reachableViews = new Set<string>();
-
-  // Expand foreign keys only from explicitly requested tables, stopping after one hop.
-  for (const key of tableTargets) {
-    for (const constraint of tablesByKey.get(key)?.constraints ?? []) {
-      if (constraint.kind === 'foreign-key') {
-        const parent = objectKey(constraint.parentTable);
-        expectedTables.add(parent);
-        directParents.add(parent);
-      }
-    }
-  }
   const queue = [...viewTargets];
   for (let i = 0; i < queue.length; i++) {
     const key = queue[i];
@@ -203,15 +169,12 @@ function collectDependencyClosure(
       if (edge.databaseLink) {
         continue;
       }
-      if (edge.type === 'TABLE') {
-        expectedTables.add(objectKey(edge.reference));
-      }
       if (edge.type === 'VIEW') {
         queue.push(objectKey(edge.reference));
       }
     }
   }
-  return { expectedTables, directParents, reachableViews };
+  return { expectedTables, reachableViews };
 }
 
 function validateViewMetadata(view: ViewDefinition, error: ReportError): void {

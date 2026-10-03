@@ -2,14 +2,16 @@
  * Builds the pipeline's source document from read-only Oracle catalog metadata.
  * Extraction is the only core stage that accesses Oracle, through SourceCatalog;
  * transformation, validation, and SQL generation work from the captured document.
- * Selected tables bring in their direct foreign-key parents, while selected views
- * bring in transitive local view dependencies and their base tables. The document
+ * Tables are a strict explicit allowlist; selected views bring in transitive
+ * local views and require their base tables to be explicitly selected. The document
  * records source facts and why each object was included so later stages can apply
  * target policy without querying or modifying the source database.
  */
 import { ExtractionProgress } from './progress.js';
 import {
   objectKey,
+  qualifiedName,
+  type Diagnostic,
   uniqueReferences,
   type ForeignKeyDefinition,
   type ObjectReference,
@@ -60,31 +62,16 @@ async function extract(
   const targetTables = uniqueReferences(selection.tables);
   const targetViews = uniqueReferences(selection.views);
   const targetTableKeys = new Set(targetTables.map(objectKey));
-  const { views, tableReferences: viewTableReferences } = await extractViews(
+  const { views } = await extractViews(
     catalog,
     targetViews,
+    targetTableKeys,
     progress,
   );
-
-  const parents: ObjectReference[] = [];
-  await catalog.prefetchForeignKeys?.(targetTables);
-  // Only direct FK parents are included. Their own outgoing FKs are later
-  // removed by transformation, keeping the dependency closure intentionally
-  // bounded instead of recursively cloning the surrounding schema.
-  for (const target of targetTables) {
-    for (const fk of await catalog.foreignKeys(target)) {
-      parents.push(fk.parentTable);
-    }
-  }
-
-  const parentKeys = new Set(parents.map(objectKey));
   const tables: TableDefinition[] = [];
   const prerequisites: Prerequisite[] = [];
-  const tableReferences = uniqueReferences([
-    ...targetTables,
-    ...parents,
-    ...viewTableReferences,
-  ]);
+  const diagnostics: Diagnostic[] = [];
+  const tableReferences = targetTables;
   await catalog.prefetchTables?.(tableReferences);
   for (const reference of tableReferences) {
     const table = await progress.measure(
@@ -92,24 +79,28 @@ async function extract(
       () => catalog.table(reference),
       { object: reference },
     );
-    const key = objectKey(reference);
-    // An object can be reached through several paths. Explicit selection takes
-    // precedence because transformation retains outgoing FKs only for targets.
-    if (targetTableKeys.has(key)) {
-      table.role = 'target';
-    } else if (parentKeys.has(key)) {
-      table.role = 'direct-parent';
-    } else {
-      table.role = 'view-dependency';
-    }
-    tables.push(table);
+    const constraints = table.constraints.filter((constraint) => {
+      if (
+        constraint.kind !== 'foreign-key' ||
+        targetTableKeys.has(objectKey(constraint.parentTable))
+      )
+        return true;
+      diagnostics.push({
+        severity: 'change',
+        code: 'OMIT_UNSELECTED_FK',
+        object: `${qualifiedName(reference)}/${constraint.name}`,
+        message: `Omitted outgoing FK to ${qualifiedName(constraint.parentTable)} because the parent table is not explicitly selected.`,
+      });
+      return false;
+    });
+    tables.push({ ...table, role: 'target', constraints });
     prerequisites.push(...(await catalog.prerequisites(reference)));
   }
 
   // Check the assembled document's shape at the stage boundary. Semantic checks
   // against target policy belong to downstream validation.
   return sourceDocumentSchema.parse({
-    formatVersion: 5,
+    formatVersion: 6,
     kind: 'source',
     dialect: 'oracle',
     sourceVersion: await catalog.databaseVersion(),
@@ -119,20 +110,20 @@ async function extract(
     tables,
     views,
     prerequisites,
-    diagnostics: [],
+    diagnostics,
   });
 }
 
-/** Collect local views once each and return table references for table extraction. */
+/** Collect local views once each, requiring explicit local base tables. */
 async function extractViews(
   catalog: SourceCatalog,
   targetViews: ObjectReference[],
+  targetTableKeys: ReadonlySet<string>,
   progress: ExtractionProgress,
-): Promise<{ views: ViewDefinition[]; tableReferences: ObjectReference[] }> {
+): Promise<{ views: ViewDefinition[] }> {
   const views: ViewDefinition[] = [];
-  const viewTableReferences: ObjectReference[] = [];
   if (targetViews.length === 0) {
-    return { views, tableReferences: viewTableReferences };
+    return { views };
   }
   if (!catalog.view || !catalog.viewDependencies) {
     throw new Error('Catalog does not support views.');
@@ -140,7 +131,7 @@ async function extractViews(
   const readView = catalog.view.bind(catalog);
   const readViewDependencies = catalog.viewDependencies.bind(catalog);
 
-  // Walk views transitively and collect their base tables separately. Generation
+  // Walk views transitively and check their explicit base tables. Generation
   // orders views by dependency downstream, after recreating the base tables.
   const targetViewKeys = new Set(targetViews.map(objectKey));
   const pendingViews = [...targetViews];
@@ -173,11 +164,18 @@ async function extractViews(
     }
     visitedViewKeys.add(key);
 
-    const view = await progress.measure('object', () => readView(reference), {
-      object: reference,
-    });
-    view.dependencies = await readViewDependencies(reference);
-    view.role = targetViewKeys.has(key) ? 'target' : 'dependency';
+    const definition = await progress.measure(
+      'object',
+      () => readView(reference),
+      {
+        object: reference,
+      },
+    );
+    const view: ViewDefinition = {
+      ...definition,
+      dependencies: await readViewDependencies(reference),
+      role: targetViewKeys.has(key) ? 'target' : 'dependency',
+    };
     views.push(view);
     for (const edge of view.dependencies) {
       // Keep remote edges in the metadata for downstream checks, but never
@@ -187,11 +185,19 @@ async function extractViews(
       }
       if (edge.type === 'VIEW') {
         pendingViews.push(edge.reference);
-      } else {
-        viewTableReferences.push(edge.reference);
+      } else if (
+        edge.type === 'TABLE' &&
+        !targetTableKeys.has(objectKey(edge.reference))
+      ) {
+        throw Object.assign(
+          new Error(
+            `View ${qualifiedName(reference)} requires unselected table ${qualifiedName(edge.reference)}; add ${JSON.stringify(edge.reference)} to the selection tables list.`,
+          ),
+          { code: 'UNSELECTED_VIEW_TABLE' },
+        );
       }
     }
   }
 
-  return { views, tableReferences: viewTableReferences };
+  return { views };
 }

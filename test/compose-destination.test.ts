@@ -101,13 +101,17 @@ test('conflicting container identity and failed volume removal fail closed', asy
 test('generated preamble cannot override replay error handling; body remains byte-for-byte', () => {
   const prefix =
     [
-      '-- Generated from oracle-schema-pipeline format 5. No source DDL was replayed.',
+      '-- Generated from oracle-schema-pipeline format 6. No source DDL was replayed.',
       'WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK',
       'WHENEVER OSERROR EXIT FAILURE ROLLBACK',
       'SET DEFINE OFF',
       'SET SQLBLANKLINES ON',
       'SET ECHO ON',
     ].join('\n\n') + '\n\n';
+  assert.throws(
+    () => generatedReplay(prefix.replace('format 6.', 'format 5.')),
+    /CLONE_STAGE_FAILED/,
+  );
   const body = "CREATE TABLE T (V VARCHAR2(10) DEFAULT '  a  ');\n";
   assert.equal(generatedReplay(prefix + body), 'SET SQLBLANKLINES ON\n' + body);
   assert.throws(

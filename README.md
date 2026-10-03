@@ -22,7 +22,7 @@ production extraction.
 | `dictionary` | Source model                   | Formatted XLSX data dictionary             | No                                    |
 
 The source model remains unchanged. The target model retains source provenance
-but applies the one-hop FK rule. Storage decisions belong to the target policy and
+and the explicit table selection. Storage decisions belong to the target policy and
 generator, not the source extractor. Every intentional FK omission is reported.
 SQL generation validates again, so omitting the separate validation command does
 not bypass the gate.
@@ -98,6 +98,9 @@ Create `objects.json` using exact catalog spelling, normally uppercase:
   "views": [{ "owner": "REPORTING", "name": "OPEN_ORDERS" }]
 }
 ```
+
+List every local base table needed by the selected views in `tables` as well.
+Extraction reports the exact missing identity if a view needs an unlisted table.
 
 An object reference has separate `owner` and `name` properties so quoted identifiers
 containing periods or spaces are unambiguous. Names are preserved, not uppercased.
@@ -236,29 +239,46 @@ workload, total and per-category execution counts, elapsed milliseconds, sampled
 peak RSS, process peak RSS and a metadata hash excluding extraction time.
 The runner verifies identical hashes across sizes. There is no CLI batch-size flag.
 
-The fresh 74-table fixture fell from 889 to 37 queries. For 74 independently
+In the historical format-v5 benchmark, the fresh 74-table fixture fell from 889 to 37 queries. For 74 independently
 selected views sharing one base table, view queries fell from 296 to 12 (309 to
 25 total). Metadata hashes match the baseline and the one-table/one-index fixture
-remains 13 queries. These are simulated transport results, not production speed
+used 13 queries. These are simulated transport results, not production speed
 guarantees. See the [measurement report](docs/benchmarks/cross-object-extraction.md),
 [historical report](docs/benchmarks/extraction.md) and
 [ADR 0007](docs/adr/0007-extraction-observability-and-batching.md).
 
-## One-hop selection and preserved source facts
+## Explicit table selection
 
-For `A -> B -> C`, selecting A fetches table definitions for **A and B only**.
-The source model records both A's FK to B and B's FK to C. It records C's reference
-and referenced key columns, but never fetches C's table definition.
-Transformation removes B's outgoing FK and records why it was omitted.
+The table list is a strict allowlist using exact owner/name identities. For
+`A -> B -> C`, selecting A extracts **only A**, omits its FK to B, and records
+one `OMIT_UNSELECTED_FK` change diagnostic. Selecting A and B retains A's FK to B
+and omits B's FK to C. Selecting all three retains both FKs. Duplicate selections
+are deduplicated. Incoming children are never discovered; self-references, cycles,
+cross-owner references and ordered composite keys survive when both endpoints
+are selected.
 
-If B is also explicitly selected, C is a direct parent of an input and is included.
-Parent-only FKs are always removed, even if their endpoints happen to be included
-through another target. Incoming child tables are not discovered. Self-references,
-cycles, cross-schema references and composite column order are retained.
+Omitted FK definitions are absent from source, target, SQL, and dictionary
+constraints. Each omission appears once in the source diagnostics and subsequent
+transformation report. Non-FK metadata remains intact. Catalog reads still decode
+referenced-key metadata, so hidden or malformed outgoing FK metadata can fail
+extraction even when its parent is unselected.
+
+Selected views recursively include local dependent views, but every required local
+table must be explicitly listed. A missing table fails with
+`UNSELECTED_VIEW_TABLE`, naming the requiring view and exact table to add, before
+publishing a source or dictionary artifact. Remote and unsupported dependencies
+remain unsupported; database links are never followed.
+
+Format v6 requires re-extraction and regeneration of v5 and earlier bundles,
+including for dictionary and clone retry. There is no automatic migration or legacy
+selection mode. Legacy CLI table-list files use the same explicit semantics.
+Selection version 2, policy version 1, progress version 1, and completion-manifest
+version 1 remain unchanged. See
+[ADR 0009](docs/adr/0009-explicit-table-selection.md).
 
 ## Intermediate model
 
-Both models have `formatVersion: 5`, a `kind` discriminator, source version/time,
+Both models have `formatVersion: 6`, a `kind` discriminator, source version/time,
 original table and view target lists, table and view definitions, prerequisites and diagnostics. The target
 adds `targetVersion: "23"` and the applied policy. The model is Oracle-aware, not a
 universal database abstraction.
@@ -301,8 +321,8 @@ An example `policy.json` is included:
 }
 ```
 
-Omitting `--policy` uses these defaults. The transformation always omits
-parent-only outgoing FKs; there is no recursive mode or silent fallback.
+Omitting `--policy` uses these defaults. Transformation preserves extracted FKs
+and omission diagnostics; it does not repair authored out-of-selection FKs.
 
 The generator always omits source tablespaces, allocation clauses, physical
 compression settings and storage parameters. It uses deferred segment creation
@@ -688,7 +708,7 @@ leaves earlier objects in place. The generated file is not idempotent. SQL*Plus
 errors stop replay. Lines over a conservative 2,400 UTF-8 byte threshold are rejected
 rather than wrapped inside expressions; those need a reviewed SQLcl-specific policy.
 
-The 21 local tests cover catalog adaptation with LONG text over 32 KB, one-hop
+The local tests cover catalog adaptation with LONG text over 32 KB, explicit
 selection, source immutability, target validation, ordered generation, index reuse,
 composite/stateful FKs, identity precision, defaults, SQL expressions, identifiers,
 large Unicode JSON and file overwrite protection. They use synthetic models and a
@@ -710,32 +730,33 @@ References:
 
 ### Authoritative semantic validation
 
-Strict v4 artifacts are checked independently of extraction annotations. Invalid
+Strict v6 artifacts are checked independently of extraction annotations. Invalid
 models previously accepted may now be rejected: unrelated views/tables, table/view
 name collisions, duplicate view columns, specialized view flags (editioning,
 typed, superview, container-data), conflicting read-only/check-option settings,
 unsupported explicit collation, and invalid or inconsistent timestamp precision.
 TIMESTAMP fractional precision supports 0 through 9.
 
-Only requested view roots expand local TABLE/VIEW dependencies recursively. Only
-requested tables expand one-hop FK parents. Table roles take precedence as target,
-direct-parent, then view-dependency. Missing dependencies and cycles block SQL;
+Requested view roots expand local VIEW dependencies recursively. Expected tables
+are exactly the explicit table list and all table roles are `target`. Extra tables
+and `FK_OUTSIDE_SELECTION` block generation, even when the parent is modeled.
+Missing dependencies and cycles block SQL;
 view layers use ordinal object-key ordering shared with validation. Transform
 reports expose these diagnostics and generation independently revalidates input.
 No model repair or SQL-expression parsing is performed. See
 [ADR 0003](docs/adr/0003-authoritative-view-validation.md).
 
-### Cross-owner indexes and format v5
+### Cross-owner indexes
 
 Supported indexes retain their exact owner and name, including indexes backing
-primary-key and unique constraints and indexes on included one-hop parents.
+primary-key and unique constraints and indexes on explicitly selected tables.
 Index-only schemas join table and view owners in conditional schema creation.
 Missing owners receive the configured default tablespace and quota; existing
 users keep their settings. With `createSchemas=false`,
 provision every owner and its quota in advance. Index ownership does not expand
 table selection into that owner's schema.
 
-Format v5 requires a `dependencies` array on every index. Re-extract format-4
+Format v6 retains the `dependencies` array on every index. Re-extract old
 artifacts; table-level prerequisites cannot identify the correct grant recipient.
 Selection version 2 and policy version 1 remain unchanged.
 

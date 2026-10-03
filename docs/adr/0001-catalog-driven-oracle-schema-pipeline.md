@@ -4,6 +4,9 @@
 - Date: 2026-09-23
 - Owners: Repository maintainers
 
+Table selection and complete-FK source facts are superseded by
+[ADR 0009](0009-explicit-table-selection.md). Other decisions remain in force.
+
 ## Context
 
 The application must reconstruct a selected relational slice of an Oracle schema

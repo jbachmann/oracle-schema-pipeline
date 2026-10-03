@@ -336,3 +336,36 @@ test('cell and line-feed limits reject without truncation', () => {
     /Workbook line-feed limit exceeded: Tables APP Comment has 254 line feeds; maximum 253\./,
   );
 });
+
+test('dictionary includes omission audit entries without excluded FK definitions', async () => {
+  const { extractSource } = await import('../src/extract.js');
+  const original = sourceFixture();
+  const source = await extractSource(
+    {
+      async databaseVersion() {
+        return '23';
+      },
+      async foreignKeys() {
+        assert.fail('No parent discovery');
+      },
+      async table() {
+        return original.tables[0];
+      },
+      async prerequisites() {
+        return [];
+      },
+    },
+    { version: 2, tables: [original.tables[0].reference], views: [] },
+  );
+  const workbook = buildDictionaryWorkbook(source);
+  assert.equal(workbook.getWorksheet('Tables')!.rowCount, 2);
+  const constraints = JSON.stringify(
+    workbook.getWorksheet('Constraints')!.getSheetValues(),
+  );
+  assert.ok(!constraints.includes('FK_CHILD_PARENT'));
+  assert.ok(
+    JSON.stringify(
+      workbook.getWorksheet('Diagnostics')!.getSheetValues(),
+    ).includes('OMIT_UNSELECTED_FK'),
+  );
+});

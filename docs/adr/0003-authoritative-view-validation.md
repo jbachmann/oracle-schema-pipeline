@@ -3,6 +3,9 @@
 - Status: Accepted
 - Date: 2026-09-24
 
+Automatic view-table inclusion and table-role precedence are superseded by
+[ADR 0009](0009-explicit-table-selection.md). Other decisions remain in force.
+
 ## Decision
 
 Supersede ADR 0001's exclusion of views and its table-only selection description.

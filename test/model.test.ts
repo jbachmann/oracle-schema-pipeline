@@ -47,3 +47,46 @@ test('unique references distinguishes punctuation in owners and names', () => {
     references[0],
   ]);
 });
+
+test('v6 rejects every previous document version and historical table roles', async () => {
+  const { sourceFixture } = await import('./fixtures.js');
+  const { sourceDocumentSchema, targetDocumentSchema, policySchema } =
+    await import('../src/model.js');
+  const { transformSource } = await import('../src/transform.js');
+  const { generateSql } = await import('../src/generate.js');
+  const source = sourceFixture();
+  const target = transformSource(source, policySchema.parse({}));
+  for (const formatVersion of [1, 2, 3, 4, 5]) {
+    assert.throws(
+      () => sourceDocumentSchema.parse({ ...source, formatVersion }),
+      /re-extract/,
+    );
+    assert.throws(
+      () =>
+        transformSource(
+          { ...source, formatVersion } as unknown as typeof source,
+          policySchema.parse({}),
+        ),
+      /re-extract/,
+    );
+    assert.throws(
+      () => targetDocumentSchema.parse({ ...target, formatVersion }),
+      /re-extract/,
+    );
+    assert.throws(
+      () => generateSql({ ...target, formatVersion }),
+      /re-extract/,
+    );
+  }
+  for (const role of ['direct-parent', 'view-dependency']) {
+    assert.throws(() =>
+      sourceDocumentSchema.parse({
+        ...source,
+        tables: [{ ...source.tables[0], role }],
+      }),
+    );
+    assert.throws(() =>
+      generateSql({ ...target, tables: [{ ...target.tables[0], role }] }),
+    );
+  }
+});

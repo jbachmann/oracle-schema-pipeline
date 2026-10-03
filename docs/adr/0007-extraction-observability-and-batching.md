@@ -70,6 +70,7 @@ local or production databases. Model memory still grows with selected metadata.
 Events expose schema identifiers and need the same operator judgment as metadata
 artifacts. A start event identifies an outstanding operation, not ongoing server
 activity. Observers must remain fast and synchronous. Existing source-read-only,
-one-hop FK selection, recursive view selection, offline stages, trusted SQL,
+explicit table selection (superseded by [ADR 0009](0009-explicit-table-selection.md)),
+recursive view selection, offline stages, trusted SQL,
 independent generation validation, and non-overwrite invariants remain in force.
 There is no JSON model migration and no exception to ADR 0001's invariants.

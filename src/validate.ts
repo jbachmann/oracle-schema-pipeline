@@ -31,7 +31,6 @@ function validateParsedTarget(document: TargetDocument) {
   const indexNames = new Set<string>();
   for (const table of document.tables) {
     const tableName = qualifiedName(table.reference);
-    const isTarget = targetKeys.has(objectKey(table.reference));
     for (const feature of table.unsupportedFeatures) {
       error('UNSUPPORTED_FEATURE', tableName, feature);
     }
@@ -43,7 +42,7 @@ function validateParsedTarget(document: TargetDocument) {
       columnNames,
       constraintNames,
       tablesByKey,
-      isTarget,
+      targetKeys,
       error,
     );
   }
@@ -223,7 +222,7 @@ function validateConstraints(
   columnNames: ReadonlySet<string>,
   constraintNames: Set<string>,
   tablesByKey: ReadonlyMap<string, TableDefinition>,
-  isTarget: boolean,
+  targetKeys: ReadonlySet<string>,
   error: ReportError,
 ): void {
   const tableName = qualifiedName(table.reference);
@@ -330,11 +329,11 @@ function validateConstraints(
       }
     }
     if (constraint.kind === 'foreign-key') {
-      if (!isTarget) {
+      if (!targetKeys.has(objectKey(constraint.parentTable))) {
         error(
-          'PARENT_FK_RETAINED',
+          'FK_OUTSIDE_SELECTION',
           constraintName,
-          'Parent-only outgoing FKs must be removed by transformation.',
+          'Referenced table must be explicitly selected.',
         );
       }
       const parent = tablesByKey.get(objectKey(constraint.parentTable));

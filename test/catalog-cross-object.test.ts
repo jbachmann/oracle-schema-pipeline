@@ -84,7 +84,12 @@ for (const count of [0, 1, 31, 32, 33, 65, 74]) {
       );
       const selection = {
         version: 2 as const,
-        tables: kind === 'tables' ? objects : [],
+        tables:
+          kind === 'tables'
+            ? objects
+            : [...new Set(objects.map((ref) => ref.owner))].map((owner) =>
+                reference('T0', owner),
+              ),
         views: kind === 'views' ? objects : [],
       };
       const sources: SourceDocument[] = [];
@@ -133,7 +138,7 @@ test('74-table and wide-view executions beat the recorded pre-change baseline by
     new OracleCatalog(viewTransport.connection, 'dba', progress),
     {
       version: 2,
-      tables: [],
+      tables: [reference('T0')],
       views: Array.from({ length: 74 }, (_, i) => reference(`V${i}`)),
     },
     progress,
@@ -472,7 +477,7 @@ test('deep view chains remain incremental and visit each view once', async () =>
     new OracleCatalog(transport.connection, 'dba', progress),
     {
       version: 2,
-      tables: [],
+      tables: [reference('T0')],
       views: [reference('V0')],
     },
   );

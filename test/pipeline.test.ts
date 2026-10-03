@@ -54,7 +54,7 @@ test('schema creation checks exact users once in sorted order, including view-on
   target.policy.createSchemas = false;
   assert.doesNotMatch(generateSql(target), /CREATE USER|ALL_USERS/);
 });
-test('one-hop extraction captures parent FK facts but never fetches grandparent table', async () => {
+test('explicit extraction omits external FKs without parent discovery', async () => {
   const fixture = sourceFixture(),
     fetched: string[] = [],
     rootLookups: string[] = [];
@@ -80,22 +80,31 @@ test('one-hop extraction captures parent FK facts but never fetches grandparent 
       return [];
     },
   };
+  fixture.tables[1].constraints.push(
+    fk('FK_PARENT_GRANDPARENT', { owner: 'OTHER', name: 'GRANDPARENT' }),
+  );
   const source = await extractSource(catalog, {
     version: 2,
     tables: fixture.targetTables,
     views: [],
   });
-  assert.deepEqual(rootLookups, ['CHILD']);
+  assert.deepEqual(rootLookups, []);
   assert.deepEqual(fetched, ['CHILD', 'PARENT']);
   assert.ok(
-    source.tables[1].constraints.some(
+    !source.tables[1].constraints.some(
       (constraint) => constraint.name === 'FK_PARENT_GRANDPARENT',
     ),
   );
 });
-test('transformation removes only parent-origin FKs and does not mutate source', () => {
-  const source = sourceFixture(),
-    before = JSON.stringify(source),
+test('transformation preserves constraints and omission diagnostics without mutating source', () => {
+  const source = sourceFixture();
+  source.diagnostics.push({
+    severity: 'change',
+    code: 'OMIT_UNSELECTED_FK',
+    object: 'test',
+    message: 'omitted',
+  });
+  const before = JSON.stringify(source),
     target = transformSource(source, policySchema.parse({}));
   assert.equal(JSON.stringify(source), before);
   assert.deepEqual(
@@ -107,18 +116,23 @@ test('transformation removes only parent-origin FKs and does not mutate source',
     ['FK_CHILD_PARENT'],
   );
   assert.ok(
-    transformationReport(target).some((item) => item.code === 'OMIT_PARENT_FK'),
+    transformationReport(target).some(
+      (item) => item.code === 'OMIT_UNSELECTED_FK',
+    ),
   );
   assert.equal(
     validateTarget(target).filter((item) => item.severity === 'error').length,
     0,
   );
 });
-test('explicit second target retains its FK and requires its direct parent definition', () => {
+test('explicitly selecting all three tables retains the entire FK chain', () => {
   const source = sourceFixture();
   source.targetTables.push(source.tables[1].reference);
   const grandparent = ordinaryTable('OTHER', 'GRANDPARENT');
-  grandparent.role = 'direct-parent';
+  source.targetTables.push(grandparent.reference);
+  source.tables[1].constraints.push(
+    fk('FK_PARENT_GRANDPARENT', grandparent.reference),
+  );
   source.tables.push(grandparent);
   const target = transformSource(source, policySchema.parse({}));
   assert.equal(validateTarget(target).length, 0);
@@ -205,10 +219,12 @@ test('missing parent or mismatched ordered parent key blocks SQL', () => {
   if (foreignKey.kind === 'foreign-key') foreignKey.columnPairs.reverse();
   assert.ok(hasError(mismatch, 'MISSING_PARENT_KEY'));
 });
-test('parent-only FKs cannot be restored manually without validation failure', () => {
+test('external FKs cannot be restored manually even with a parent definition', () => {
   const target = transformSource(sourceFixture(), policySchema.parse({}));
-  target.tables[1].constraints.push(fk('FK_BACK', target.tables[0].reference));
-  assert.ok(hasError(target, 'PARENT_FK_RETAINED'));
+  target.targetTables.pop();
+  assert.ok(hasError(target, 'FK_OUTSIDE_SELECTION'));
+  assert.ok(hasError(target, 'EXTRA_TABLE'));
+  assert.throws(() => generateSql(target), /FK_OUTSIDE_SELECTION/);
 });
 test('missing backing indexes and duplicate schema constraint names are rejected', () => {
   const target = transformSource(sourceFixture(), policySchema.parse({}));
@@ -460,7 +476,6 @@ test('unreachable views and retained nonroot FKs cannot expand the closure', () 
   const target = transformSource(sourceFixture(), policySchema.parse({})),
     view = ordinaryView('EXTRA');
   const extra = ordinaryTable('APP', 'EXTRA_TABLE');
-  extra.role = 'view-dependency';
   view.role = 'dependency';
   view.dependencies = [
     { reference: extra.reference, type: 'TABLE', databaseLink: null },
@@ -508,9 +523,12 @@ test('view diamonds, duplicate edges, mixed table roles and shuffles are determi
   target.views.reverse();
   for (const view of target.views) view.dependencies.reverse();
   assert.equal(generateSql(target), sql);
-  target.tables.find((t) => t.role === 'direct-parent')!.role =
-    'view-dependency';
-  assert.ok(hasError(target, 'ROLE_MISMATCH'));
+  assert.throws(() =>
+    targetDocumentSchema.parse({
+      ...target,
+      tables: [{ ...target.tables[0], role: 'direct-parent' }],
+    }),
+  );
 });
 
 test('missing roots, missing view edges and cycles remain blocking', () => {
@@ -558,14 +576,13 @@ test('timestamp precision boundaries and inconsistent metadata are checked befor
   assert.throws(() => renderDataType(column, policySchema.parse({})), /agree/);
 });
 
-test('view-only table dependencies are accepted without expanding their foreign keys', () => {
+test('view edges cannot authorize unselected table definitions', () => {
   const source = sourceFixture(),
     view = ordinaryView('V');
   source.targetTables = [];
   source.targetViews = [view.reference];
   source.views = [view];
   source.tables = [source.tables[1]];
-  source.tables[0].role = 'view-dependency';
   view.dependencies = [
     {
       reference: source.tables[0].reference,
@@ -574,8 +591,8 @@ test('view-only table dependencies are accepted without expanding their foreign 
     },
   ];
   const target = transformSource(source, policySchema.parse({}));
-  assert.deepEqual(validateTarget(target), []);
-  assert.ok(!generateSql(target).includes('GRANDPARENT'));
+  assert.ok(hasError(target, 'EXTRA_TABLE'));
+  assert.throws(() => generateSql(target), /EXTRA_TABLE/);
   target.views[0].dependencies[0].databaseLink = 'REMOTE';
   assert.ok(hasError(target, 'REMOTE_VIEW_DEPENDENCY'));
   assert.ok(hasError(target, 'EXTRA_TABLE'));
@@ -689,12 +706,12 @@ test('view extraction visits diamond dependencies once and stops at base tables'
   };
   const selection = {
     version: 2 as const,
-    tables: [],
+    tables: [table.reference],
     views: [views[0].reference],
   };
   const source = await extractSource(catalog, selection);
   assert.deepEqual(visits, ['ROOT', 'LEFT', 'BASE', 'RIGHT']);
-  assert.equal(source.tables[0].role, 'view-dependency');
+  assert.equal(source.tables[0].role, 'target');
   assert.deepEqual(
     validateTarget(transformSource(source, policySchema.parse({}))),
     [],
@@ -887,4 +904,41 @@ test('validation and generation boundaries strictly parse unknown input', () => 
   assertValidTarget(target);
   generateSql(target);
   assert.deepEqual(target, before);
+});
+
+test('transform never repairs authored external FKs and generation independently rejects them', () => {
+  const source = sourceFixture();
+  source.targetTables = [source.tables[0].reference];
+  const before = structuredClone(source);
+  const target = transformSource(source, policySchema.parse({}));
+  assert.deepEqual(source, before);
+  assert.deepEqual(target.tables[0].constraints, source.tables[0].constraints);
+  assert.ok(hasError(target, 'FK_OUTSIDE_SELECTION'));
+  assert.ok(hasError(target, 'EXTRA_TABLE'));
+  assert.throws(() => generateSql(target), /FK_OUTSIDE_SELECTION/);
+  target.tables.pop();
+  assert.ok(hasError(target, 'MISSING_PARENT'));
+  assert.ok(hasError(target, 'FK_OUTSIDE_SELECTION'));
+  assert.throws(() => generateSql(target), /FK_OUTSIDE_SELECTION/);
+});
+
+test('missing explicitly selected tables and absent view base tables independently block generation', () => {
+  const target = transformSource(sourceFixture(), policySchema.parse({}));
+  target.tables.pop();
+  assert.ok(hasError(target, 'MISSING_TARGET'));
+  assert.throws(() => generateSql(target), /MISSING_TARGET/);
+  const view = ordinaryView('ROOT');
+  view.dependencies = [
+    {
+      reference: { owner: 'APP', name: 'UNLISTED' },
+      type: 'TABLE',
+      databaseLink: null,
+    },
+  ];
+  target.views = [view];
+  target.targetViews = [view.reference];
+  assert.ok(hasError(target, 'MISSING_VIEW_DEPENDENCY'));
+  target.tables.push(ordinaryTable('APP', 'UNLISTED'));
+  assert.ok(hasError(target, 'EXTRA_TABLE'));
+  assert.throws(() => generateSql(target), /EXTRA_TABLE/);
 });

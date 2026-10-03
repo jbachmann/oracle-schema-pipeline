@@ -96,17 +96,13 @@ export function sourceFixture(): SourceDocument {
   const child = ordinaryTable('APP', 'CHILD'),
     parent = ordinaryTable('SHARED', 'PARENT');
   child.constraints.push(fk('FK_CHILD_PARENT', parent.reference));
-  parent.role = 'direct-parent';
-  parent.constraints.push(
-    fk('FK_PARENT_GRANDPARENT', { owner: 'OTHER', name: 'GRANDPARENT' }),
-  );
   return sourceDocumentSchema.parse({
-    formatVersion: 5,
+    formatVersion: 6,
     kind: 'source',
     dialect: 'oracle',
     sourceVersion: '19.0.0.0.0',
     extractedAt: '2026-09-22T00:00:00.000Z',
-    targetTables: [child.reference],
+    targetTables: [child.reference, parent.reference],
     targetViews: [],
     views: [],
     tables: [child, parent],

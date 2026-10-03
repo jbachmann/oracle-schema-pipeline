@@ -4,6 +4,8 @@ rejectDsnOverrides();
 import { ExtractionProgress, type ProgressEvent } from '../../src/progress.js';
 import {
   assertIndependentFacts,
+  assertExplicitSelectionFacts,
+  assertPartialCompositeFacts,
   assertDestinationBehavior,
 } from './independent-facts.js';
 import { OracleCatalog } from '../../src/catalog.js';
@@ -440,7 +442,7 @@ test(
       }
       const source = await extractSource(new OracleCatalog(connection), {
         version: 2,
-        tables: [],
+        tables: [{ owner, name: table }],
         views: cases.map(({ name }) => ({ owner, name })),
       });
       const workbook = buildDictionaryWorkbook(source).getWorksheet('Views')!;
@@ -550,6 +552,14 @@ test('restricted ALL catalog sessions have only explicit grants and reject hidde
             tables: [],
             views: [{ owner: 'COMMERCE', name: 'OPEN_ORDERS' }],
           }),
+          { code: 'UNSELECTED_VIEW_TABLE' },
+        );
+        await assert.rejects(
+          extractSource(catalog, {
+            version: 2,
+            tables: [{ owner: 'COMMERCE', name: 'SALES_ORDERS' }],
+            views: [{ owner: 'COMMERCE', name: 'OPEN_ORDERS' }],
+          }),
           /CATALOG_(?:INCOMPLETE_METADATA|CARDINALITY)/,
         );
       }
@@ -599,6 +609,87 @@ for (const scope of ['all', 'dba'] as const) {
           counts[1] < counts[0],
           `Expected fewer queries: ${counts.join(' -> ')}`,
         );
+      } finally {
+        await connection.close();
+      }
+    },
+  );
+}
+
+for (const scope of ['all', 'dba'] as const) {
+  test(
+    `explicit partial FK chains replay exact table and FK sets with ${scope} catalogs`,
+    { timeout: 600_000 },
+    async () => {
+      const connection = await oracle.getConnection({
+        user: scope === 'all' ? 'SYSTEM[SCHEMA_READER]' : 'SYSTEM',
+        password,
+        connectString: await publishedDsn('oracle-source'),
+      });
+      const destinationDsn = await publishedDsn('oracle-destination');
+      try {
+        for (const count of [1, 2, 3]) {
+          const tables = ['USER_PROFILES', 'PRINCIPALS', 'ORGANIZATIONS']
+            .slice(0, count)
+            .map((name) => ({ owner: 'IAM', name }));
+          const outputs = [];
+          for (const size of [1, 32]) {
+            const source = await extractSource(
+              new OracleCatalog(connection, scope, undefined, size),
+              {
+                version: 2,
+                tables,
+                views: [],
+              },
+            );
+            assert.equal(source.tables.length, count);
+            assert.equal(
+              source.diagnostics.filter((d) => d.code === 'OMIT_UNSELECTED_FK')
+                .length,
+              count === 3 ? 0 : 1,
+            );
+            outputs.push(
+              generateSql(transformSource(source, policySchema.parse({}))),
+            );
+          }
+          assert.equal(outputs[0], outputs[1]);
+          await runSqlplus(
+            'oracle-destination',
+            `ALTER SESSION SET CONTAINER=FREEPDB1;
+BEGIN
+${schemas.map((schema) => `BEGIN EXECUTE IMMEDIATE 'DROP USER ${schema} CASCADE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -1918 THEN RAISE; END IF; END;`).join('\n')}
+END;
+/
+${outputs[0]}`,
+          );
+          await assertExplicitSelectionFacts(destinationDsn, password, count);
+        }
+        const source = await extractSource(
+          new OracleCatalog(connection, scope),
+          {
+            version: 2,
+            tables: [
+              { owner: 'FINANCE', name: 'INVOICE_LINES' },
+              { owner: 'COMMERCE', name: 'ORDER_LINES' },
+            ],
+            views: [],
+          },
+        );
+        assert.equal(
+          source.diagnostics.filter((d) => d.code === 'OMIT_UNSELECTED_FK')
+            .length,
+          4,
+        );
+        await runSqlplus(
+          'oracle-destination',
+          `ALTER SESSION SET CONTAINER=FREEPDB1;
+BEGIN
+${schemas.map((schema) => `BEGIN EXECUTE IMMEDIATE 'DROP USER ${schema} CASCADE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -1918 THEN RAISE; END IF; END;`).join('\n')}
+END;
+/
+${generateSql(transformSource(source, policySchema.parse({})))}`,
+        );
+        await assertPartialCompositeFacts(destinationDsn, password);
       } finally {
         await connection.close();
       }
